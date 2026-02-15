@@ -24,13 +24,21 @@ struct SettingsView: View {
                 if revealAPIKey {
                     TextField("sk-...", text: $draftAPIKey)
                         .textFieldStyle(.roundedBorder)
+                        .disabled(appState.isUsingDotEnvAPIKey)
                 } else {
                     SecureField("sk-...", text: $draftAPIKey)
                         .textFieldStyle(.roundedBorder)
+                        .disabled(appState.isUsingDotEnvAPIKey)
                 }
 
                 Toggle("Show API key", isOn: $revealAPIKey)
                     .toggleStyle(.checkbox)
+
+                if appState.isUsingDotEnvAPIKey {
+                    Text(".env detected: OPENAI_API_KEY is being used, so this field will not be saved to Keychain.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {

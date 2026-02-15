@@ -19,6 +19,16 @@ cd /Users/amarjeetrai/sonu27/test/VoiceBarDictate
 swift run
 ```
 
+## Use `.env` For API Key (Dev)
+
+If a `.env` file exists, the app uses `OPENAI_API_KEY` from that file and skips Keychain API key access.
+
+```bash
+cp .env.example .env
+# edit .env and set OPENAI_API_KEY
+swift run
+```
+
 ## Setup
 
 1. Launch the app (from `swift run` or Xcode).

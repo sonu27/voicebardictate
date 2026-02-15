@@ -7,6 +7,7 @@ final class AppState: ObservableObject {
     @Published var statusMessage = "Ready"
     @Published var errorMessage: String?
     @Published var lastTranscript = ""
+    @Published var recordingLevel = 0.0
 
     @Published var apiKey: String {
         didSet {
@@ -46,11 +47,19 @@ final class AppState: ObservableObject {
 
     let hotkeyHint = "Control + Option + Space"
 
+    var isUsingDotEnvAPIKey: Bool {
+        settingsStore.isUsingDotEnvAPIKey
+    }
+
     private let settingsStore: SettingsStore
     private let recorderService = AudioRecorderService()
     private let transcriptionClient = OpenAITranscriptionClient()
     private let textInjector = TextInjector()
     private let hotkeyManager = HotkeyManager()
+    private let escapeKeyMonitor = EscapeKeyMonitor()
+    private let recordingOverlay = RecordingOverlayController()
+    private var recordingLevelTask: Task<Void, Never>?
+    private var transcriptionTask: Task<String, Error>?
 
     init(settingsStore: SettingsStore = SettingsStore()) {
         self.settingsStore = settingsStore
@@ -64,6 +73,16 @@ final class AppState: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.handleToggleRequest()
+            }
+        }
+        escapeKeyMonitor.onEscapePressed = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleEscapePressed()
+            }
+        }
+        escapeKeyMonitor.onReturnPressed = { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.handleReturnPressed()
             }
         }
 
@@ -134,8 +153,11 @@ final class AppState: ObservableObject {
         do {
             _ = try recorderService.startRecording()
             isRecording = true
+            escapeKeyMonitor.setCaptureActive(true)
             statusMessage = "Recording..."
+            startRecordingLevelUpdates()
         } catch {
+            escapeKeyMonitor.setCaptureActive(false)
             setError("Could not start recording: \(error.localizedDescription)")
         }
     }
@@ -144,22 +166,34 @@ final class AppState: ObservableObject {
         do {
             let audioFileURL = try recorderService.stopRecording()
             isRecording = false
+            stopRecordingLevelUpdates()
             isTranscribing = true
+            recordingOverlay.showTranscribing()
             statusMessage = "Transcribing..."
 
             defer {
+                transcriptionTask = nil
                 isTranscribing = false
+                escapeKeyMonitor.setCaptureActive(false)
+                recordingOverlay.hide()
                 try? FileManager.default.removeItem(at: audioFileURL)
             }
 
-            let transcript = try await transcriptionClient.transcribe(
-                fileURL: audioFileURL,
-                apiKey: apiKey,
-                baseURL: apiBaseURL,
-                model: model,
-                prompt: prompt,
-                language: language
-            )
+            transcriptionTask = Task {
+                try await transcriptionClient.transcribe(
+                    fileURL: audioFileURL,
+                    apiKey: apiKey,
+                    baseURL: apiBaseURL,
+                    model: model,
+                    prompt: prompt,
+                    language: language
+                )
+            }
+
+            guard let transcriptionTask else {
+                throw CancellationError()
+            }
+            let transcript = try await transcriptionTask.value
 
             let normalizedText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedText.isEmpty else {
@@ -176,10 +210,84 @@ final class AppState: ObservableObject {
             } catch {
                 setError("Transcribed but failed to paste automatically: \(error.localizedDescription)")
             }
+        } catch is CancellationError {
+            isRecording = false
+            stopRecordingLevelUpdates()
+            escapeKeyMonitor.setCaptureActive(false)
+            recordingOverlay.hide()
+            clearError()
+            statusMessage = "Dictation canceled."
         } catch {
             isRecording = false
+            stopRecordingLevelUpdates()
+            escapeKeyMonitor.setCaptureActive(false)
+            recordingOverlay.hide()
             setError("Could not stop and transcribe: \(error.localizedDescription)")
         }
+    }
+
+    private func startRecordingLevelUpdates() {
+        stopRecordingLevelUpdates()
+        recordingLevel = 0
+        recordingOverlay.showRecording(level: 0)
+
+        recordingLevelTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                let sample = recorderService.currentInputLevel()
+                recordingLevel = smoothedLevel(previous: recordingLevel, next: sample)
+                recordingOverlay.updateRecordingLevel(recordingLevel)
+                try? await Task.sleep(nanoseconds: 70_000_000)
+            }
+        }
+    }
+
+    private func stopRecordingLevelUpdates() {
+        recordingLevelTask?.cancel()
+        recordingLevelTask = nil
+        recordingLevel = 0
+    }
+
+    private func smoothedLevel(previous: Double, next: Double) -> Double {
+        let rise = 0.6
+        let fall = 0.2
+        let blend = next > previous ? rise : fall
+        return (next * blend) + (previous * (1 - blend))
+    }
+
+    private func handleEscapePressed() {
+        if isRecording {
+            cancelRecording()
+            return
+        }
+
+        if isTranscribing {
+            cancelTranscription()
+        }
+    }
+
+    private func handleReturnPressed() async {
+        guard isRecording, !isTranscribing else { return }
+        await stopAndTranscribe()
+    }
+
+    private func cancelRecording() {
+        if let audioURL = try? recorderService.stopRecording() {
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        isRecording = false
+        stopRecordingLevelUpdates()
+        escapeKeyMonitor.setCaptureActive(false)
+        recordingOverlay.hide()
+        clearError()
+        statusMessage = "Dictation canceled."
+    }
+
+    private func cancelTranscription() {
+        transcriptionTask?.cancel()
+        statusMessage = "Canceling..."
     }
 
     private func clearError() {

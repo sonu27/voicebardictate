@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class AudioRecorderService: NSObject {
     private var recorder: AVAudioRecorder?
+    private let minimumMeteringPower: Float = -50
 
     func requestPermission() async -> Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -43,6 +44,7 @@ final class AudioRecorderService: NSObject {
         ]
 
         let recorder = try AVAudioRecorder(url: fileURL, settings: settings)
+        recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
         guard recorder.record() else {
             throw RecorderError.recordingFailed
@@ -60,6 +62,18 @@ final class AudioRecorderService: NSObject {
         recorder.stop()
         self.recorder = nil
         return recorder.url
+    }
+
+    func currentInputLevel() -> Double {
+        guard let recorder else {
+            return 0
+        }
+
+        recorder.updateMeters()
+        let averagePower = recorder.averagePower(forChannel: 0)
+        let clampedPower = max(minimumMeteringPower, min(0, averagePower))
+        let normalizedLevel = (clampedPower - minimumMeteringPower) / -minimumMeteringPower
+        return Double(normalizedLevel)
     }
 }
 
