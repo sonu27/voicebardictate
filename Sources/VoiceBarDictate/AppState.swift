@@ -9,6 +9,7 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var lastTranscript = ""
     @Published var recordingLevel = 0.0
+    @Published private(set) var launchAtLogin = false
 
     @Published var apiKey: String {
         didSet {
@@ -52,7 +53,12 @@ final class AppState: ObservableObject {
         settingsStore.isUsingDotEnvAPIKey
     }
 
+    var canConfigureLaunchAtLogin: Bool {
+        launchAtLoginService.isSupportedEnvironment
+    }
+
     private let settingsStore: SettingsStore
+    private let launchAtLoginService = LaunchAtLoginService()
     private let recorderService = AudioRecorderService()
     private let transcriptionClient = OpenAITranscriptionClient()
     private let textInjector = TextInjector()
@@ -73,6 +79,7 @@ final class AppState: ObservableObject {
         self.apiBaseURL = settingsStore.apiBaseURL
         self.language = settingsStore.language
         self.prompt = settingsStore.prompt
+        self.launchAtLogin = settingsStore.startAtLogin
 
         hotkeyManager.onHotKeyPressed = { [weak self] in
             Task { @MainActor [weak self] in
@@ -97,6 +104,7 @@ final class AppState: ObservableObject {
             setError("Could not register global shortcut. \(error.localizedDescription)")
         }
 
+        syncLaunchAtLoginPreferenceAtStartup()
         scheduleStartupAccessibilityCheck()
     }
 
@@ -112,9 +120,9 @@ final class AppState: ObservableObject {
             return "waveform.circle.fill"
         }
         if isTranscribing {
-            return "hourglass.circle.fill"
+            return "waveform.circle"
         }
-        return "mic.circle"
+        return "waveform"
     }
 
     func toggleFromMenu() {
@@ -136,6 +144,32 @@ final class AppState: ObservableObject {
         guard !lastTranscript.isEmpty else { return }
         TextInjector.copyToClipboard(lastTranscript)
         statusMessage = "Last transcript copied."
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        settingsStore.startAtLogin = enabled
+        launchAtLogin = enabled
+
+        guard launchAtLoginService.isSupportedEnvironment else { return }
+
+        do {
+            try launchAtLoginService.setEnabled(enabled)
+            let effectiveState = launchAtLoginService.isEnabled()
+            launchAtLogin = effectiveState
+            settingsStore.startAtLogin = effectiveState
+
+            if effectiveState == enabled {
+                statusMessage = enabled ? "Start at login enabled." : "Start at login disabled."
+                return
+            }
+
+            setError("Start at login is pending approval in System Settings > General > Login Items.")
+        } catch {
+            let effectiveState = launchAtLoginService.isEnabled()
+            launchAtLogin = effectiveState
+            settingsStore.startAtLogin = effectiveState
+            setError("Could not update start at login: \(error.localizedDescription)")
+        }
     }
 
     private func handleToggleRequest() async {
@@ -384,6 +418,21 @@ final class AppState: ObservableObject {
             NSApp.terminate(nil)
         } catch {
             setError("Accessibility enabled. Please restart the app manually. \(error.localizedDescription)")
+        }
+    }
+
+    private func syncLaunchAtLoginPreferenceAtStartup() {
+        guard launchAtLoginService.isSupportedEnvironment else { return }
+
+        do {
+            try launchAtLoginService.setEnabled(launchAtLogin)
+            let effectiveState = launchAtLoginService.isEnabled()
+            launchAtLogin = effectiveState
+            settingsStore.startAtLogin = effectiveState
+        } catch {
+            let effectiveState = launchAtLoginService.isEnabled()
+            launchAtLogin = effectiveState
+            settingsStore.startAtLogin = effectiveState
         }
     }
 }

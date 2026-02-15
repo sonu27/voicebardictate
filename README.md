@@ -11,6 +11,7 @@ Native SwiftUI/AppKit menu bar app for push-to-talk dictation using OpenAI speec
 - Pastes transcript into the active app using synthetic `Cmd+V`
 - API key stored in macOS Keychain
 - Low idle CPU usage (no always-on audio processing)
+- Optional start-at-login toggle (when running from the signed `.app` bundle)
 
 ## Run
 
@@ -96,6 +97,7 @@ swift run
 5. Grant microphone permission when prompted.
 6. On startup, the app asks for Accessibility permission automatically.
 7. After Accessibility is enabled, the app relaunches itself once so paste injection is fully active.
+8. To run at login, open Settings and enable **Start at login**.
 
 ## Notes
 

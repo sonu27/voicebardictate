@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var draftAPIBaseURL = "https://api.openai.com"
     @State private var draftLanguage = ""
     @State private var draftPrompt = ""
+    @State private var draftStartAtLogin = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -94,6 +95,21 @@ struct SettingsView: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Launch")
+                    .font(.headline)
+
+                Toggle("Start at login", isOn: $draftStartAtLogin)
+                    .toggleStyle(.checkbox)
+                    .disabled(!appState.canConfigureLaunchAtLogin)
+
+                if !appState.canConfigureLaunchAtLogin {
+                    Text("Launch at login can be enabled after you open the signed .app bundle.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Spacer(minLength: 8)
 
             HStack {
@@ -119,6 +135,7 @@ struct SettingsView: View {
         draftAPIBaseURL = appState.apiBaseURL
         draftLanguage = appState.language
         draftPrompt = appState.prompt
+        draftStartAtLogin = appState.launchAtLogin
     }
 
     private func saveAndClose() {
@@ -130,6 +147,7 @@ struct SettingsView: View {
 
         appState.language = draftLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
         appState.prompt = draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        appState.setLaunchAtLogin(draftStartAtLogin)
         dismiss()
     }
 }
