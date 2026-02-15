@@ -6,6 +6,7 @@ final class SettingsStore {
         static let model = "settings.model"
         static let language = "settings.language"
         static let prompt = "settings.prompt"
+        static let livePreviewEnabled = "settings.livePreviewEnabled"
     }
 
     private let defaults: UserDefaults
@@ -52,6 +53,15 @@ final class SettingsStore {
         }
         set {
             defaults.set(newValue, forKey: DefaultsKey.prompt)
+        }
+    }
+
+    var livePreviewEnabled: Bool {
+        get {
+            defaults.bool(forKey: DefaultsKey.livePreviewEnabled)
+        }
+        set {
+            defaults.set(newValue, forKey: DefaultsKey.livePreviewEnabled)
         }
     }
 

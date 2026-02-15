@@ -9,6 +9,7 @@ struct OpenAITranscriptionClient {
         prompt: String?,
         language: String?
     ) async throws -> String {
+        let debugLogger = DebugLogger.shared
         let normalizedBaseURL = normalizeBaseURL(baseURL)
         guard let endpoint = URL(string: normalizedBaseURL + "/v1/audio/transcriptions") else {
             throw TranscriptionError.invalidBaseURL(baseURL)
@@ -16,6 +17,11 @@ struct OpenAITranscriptionClient {
 
         let audioData = try Data(contentsOf: fileURL)
         let boundary = "Boundary-\(UUID().uuidString)"
+        let mimeType = mimeType(for: fileURL.pathExtension)
+        debugLogger.info(
+            "Starting file transcription. endpointHost=\(endpoint.host ?? "nil"), model=\(model), fileExt=\(fileURL.pathExtension), bytes=\(audioData.count)",
+            category: "transcription"
+        )
         var request = URLRequest(url: endpoint)
 
         request.httpMethod = "POST"
@@ -27,6 +33,7 @@ struct OpenAITranscriptionClient {
             prompt: prompt,
             language: language,
             fileName: fileURL.lastPathComponent,
+            mimeType: mimeType,
             audioData: audioData
         )
 
@@ -34,6 +41,10 @@ struct OpenAITranscriptionClient {
         guard let response = response as? HTTPURLResponse else {
             throw TranscriptionError.invalidResponse
         }
+        debugLogger.info(
+            "File transcription response received. status=\(response.statusCode), responseBytes=\(data.count)",
+            category: "transcription"
+        )
 
         guard (200..<300).contains(response.statusCode) else {
             if let apiError = try? JSONDecoder().decode(OpenAIErrorEnvelope.self, from: data) {
@@ -49,6 +60,10 @@ struct OpenAITranscriptionClient {
                     guard let retryHTTPResponse = retryResponse as? HTTPURLResponse else {
                         throw TranscriptionError.invalidResponse
                     }
+                    debugLogger.info(
+                        "File transcription retry response. status=\(retryHTTPResponse.statusCode), responseBytes=\(retryData.count)",
+                        category: "transcription"
+                    )
 
                     if (200..<300).contains(retryHTTPResponse.statusCode) {
                         let retryResult = try JSONDecoder().decode(TranscriptionResponse.self, from: retryData)
@@ -73,6 +88,10 @@ struct OpenAITranscriptionClient {
         }
 
         let result = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
+        debugLogger.info(
+            "File transcription decoded successfully. textLength=\(result.text.trimmingCharacters(in: .whitespacesAndNewlines).count)",
+            category: "transcription"
+        )
         return result.text
     }
 
@@ -131,6 +150,7 @@ struct OpenAITranscriptionClient {
         prompt: String?,
         language: String?,
         fileName: String,
+        mimeType: String,
         audioData: Data
     ) -> Data {
         var body = Data()
@@ -154,12 +174,31 @@ struct OpenAITranscriptionClient {
 
         body.appendString("--\(boundary)\r\n")
         body.appendString("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n")
-        body.appendString("Content-Type: audio/m4a\r\n\r\n")
+        body.appendString("Content-Type: \(mimeType)\r\n\r\n")
         body.append(audioData)
         body.appendString("\r\n")
         body.appendString("--\(boundary)--\r\n")
 
         return body
+    }
+
+    private func mimeType(for pathExtension: String) -> String {
+        switch pathExtension.lowercased() {
+        case "wav":
+            return "audio/wav"
+        case "mp3":
+            return "audio/mpeg"
+        case "m4a":
+            return "audio/m4a"
+        case "mp4":
+            return "audio/mp4"
+        case "webm":
+            return "audio/webm"
+        case "flac":
+            return "audio/flac"
+        default:
+            return "application/octet-stream"
+        }
     }
 }
 

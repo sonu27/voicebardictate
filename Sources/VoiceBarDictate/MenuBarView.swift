@@ -33,6 +33,16 @@ struct MenuBarView: View {
 
         Text("Shortcut: \(appState.hotkeyHint)")
 
+        Divider()
+
+        Button("Open Debug Log") {
+            appState.openDebugLogInFinder()
+        }
+
+        Button("Copy Debug Log Path") {
+            appState.copyDebugLogPathToClipboard()
+        }
+
         Button("Settings...") {
             NSApplication.shared.activate(ignoringOtherApps: true)
             openWindow(id: "settings")

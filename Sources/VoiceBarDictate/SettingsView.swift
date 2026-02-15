@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var draftAPIBaseURL = "https://api.openai.com"
     @State private var draftLanguage = ""
     @State private var draftPrompt = ""
+    @State private var draftLivePreviewEnabled = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -51,6 +52,21 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Live Preview (Beta)", isOn: $draftLivePreviewEnabled)
+                    .disabled(!isDraftModelLivePreviewCompatible)
+
+                if isDraftModelLivePreviewCompatible {
+                    Text("Shows live transcript text in the HUD while recording. Final text is pasted only after completion.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Live Preview requires gpt-4o-mini-transcribe or gpt-4o-transcribe.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -119,6 +135,7 @@ struct SettingsView: View {
         draftAPIBaseURL = appState.apiBaseURL
         draftLanguage = appState.language
         draftPrompt = appState.prompt
+        draftLivePreviewEnabled = appState.livePreviewEnabled
     }
 
     private func saveAndClose() {
@@ -130,6 +147,11 @@ struct SettingsView: View {
 
         appState.language = draftLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
         appState.prompt = draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        appState.setLivePreviewEnabled(draftLivePreviewEnabled && isDraftModelLivePreviewCompatible)
         dismiss()
+    }
+
+    private var isDraftModelLivePreviewCompatible: Bool {
+        appState.livePreviewSupportedModels.contains(draftModel)
     }
 }

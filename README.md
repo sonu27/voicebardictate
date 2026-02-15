@@ -7,6 +7,9 @@ Native SwiftUI/AppKit menu bar app for push-to-talk dictation using OpenAI speec
 - Menu bar app (`MenuBarExtra`)
 - Global hotkey: `Control + Option + Space`
 - Press once to start recording, press again to stop and transcribe
+- Optional **Live Preview (Beta)** mode with realtime transcript text in HUD
+- Live Preview pastes only final text (no partial text injection while speaking)
+- Automatic fallback to standard file transcription if realtime streaming fails
 - Uses OpenAI Audio Transcriptions API (`/v1/audio/transcriptions`)
 - Pastes transcript into the active app using synthetic `Cmd+V`
 - API key stored in macOS Keychain
@@ -96,8 +99,12 @@ swift run
 5. Grant microphone permission when prompted.
 6. On startup, the app asks for Accessibility permission automatically.
 7. After Accessibility is enabled, the app relaunches itself once so paste injection is fully active.
+8. Optional: enable **Live Preview (Beta)** in Settings for realtime HUD text.
+   - Supported models: `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`
+   - `whisper-1` will disable the toggle automatically
 
 ## Notes
 
 - If you run this via Terminal (`swift run`), macOS may attribute privacy prompts to Terminal.
 - For regular daily use, open `Package.swift` in Xcode and run it from Xcode so permissions are tied to the app/debug target.
+- Live Preview uses Realtime transcription when available, then falls back to `/v1/audio/transcriptions` on any live-stream interruption.
