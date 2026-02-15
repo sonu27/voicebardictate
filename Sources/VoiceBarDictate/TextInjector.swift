@@ -11,11 +11,11 @@ struct TextInjector {
     }
 
     func hasAccessibilityPermission(promptIfNeeded: Bool) -> Bool {
-        if promptIfNeeded, !AXIsProcessTrusted() {
-            if let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(settingsURL)
-            }
+        if promptIfNeeded {
+            let options = ["AXTrustedCheckOptionPrompt" as CFString: true] as CFDictionary
+            return AXIsProcessTrustedWithOptions(options)
         }
+
         return AXIsProcessTrusted()
     }
 

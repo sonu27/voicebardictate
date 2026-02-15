@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @MainActor
@@ -60,6 +61,10 @@ final class AppState: ObservableObject {
     private let recordingOverlay = RecordingOverlayController()
     private var recordingLevelTask: Task<Void, Never>?
     private var transcriptionTask: Task<String, Error>?
+    private var accessibilityPermissionTask: Task<Void, Never>?
+    private var accessibilityStartupTask: Task<Void, Never>?
+    private var startupAccessibilityCheckDidRun = false
+    private var shouldRelaunchAfterAccessibilityGrant = false
 
     init(settingsStore: SettingsStore = SettingsStore()) {
         self.settingsStore = settingsStore
@@ -91,6 +96,15 @@ final class AppState: ObservableObject {
         } catch {
             setError("Could not register global shortcut. \(error.localizedDescription)")
         }
+
+        scheduleStartupAccessibilityCheck()
+    }
+
+    deinit {
+        accessibilityPermissionTask?.cancel()
+        accessibilityStartupTask?.cancel()
+        recordingLevelTask?.cancel()
+        transcriptionTask?.cancel()
     }
 
     var menuBarSymbolName: String {
@@ -297,5 +311,79 @@ final class AppState: ObservableObject {
     private func setError(_ message: String) {
         errorMessage = message
         statusMessage = message
+    }
+
+    private func scheduleStartupAccessibilityCheck() {
+        accessibilityStartupTask?.cancel()
+        accessibilityStartupTask = Task { @MainActor [weak self] in
+            // Trigger prompt only after launch settles, so macOS can register the app properly.
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            self?.runStartupAccessibilityCheckIfNeeded()
+        }
+    }
+
+    private func runStartupAccessibilityCheckIfNeeded() {
+        guard !startupAccessibilityCheckDidRun else { return }
+        startupAccessibilityCheckDidRun = true
+
+        guard !textInjector.hasAccessibilityPermission(promptIfNeeded: false) else { return }
+
+        shouldRelaunchAfterAccessibilityGrant = true
+        let hasPermissionAfterPrompt = textInjector.hasAccessibilityPermission(promptIfNeeded: true)
+        if hasPermissionAfterPrompt {
+            relaunchAfterAccessibilityGrant()
+            return
+        }
+
+        setError("Grant Accessibility permission in System Settings > Privacy & Security > Accessibility. VoiceBarDictate will restart automatically after access is enabled.")
+        monitorAccessibilityPermissionUntilGranted()
+    }
+
+    private func monitorAccessibilityPermissionUntilGranted() {
+        accessibilityPermissionTask?.cancel()
+        accessibilityPermissionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                if textInjector.hasAccessibilityPermission(promptIfNeeded: false) {
+                    relaunchAfterAccessibilityGrant()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func relaunchAfterAccessibilityGrant() {
+        guard shouldRelaunchAfterAccessibilityGrant else { return }
+        shouldRelaunchAfterAccessibilityGrant = false
+        accessibilityPermissionTask?.cancel()
+        clearError()
+        statusMessage = "Accessibility enabled. Restarting..."
+
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        let bundleURL = Bundle.main.bundleURL
+
+        if bundleURL.pathExtension == "app" {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-n", bundleURL.path]
+            do {
+                try process.run()
+                NSApp.terminate(nil)
+            } catch {
+                setError("Accessibility enabled. Please restart the app manually. \(error.localizedDescription)")
+            }
+            return
+        }
+
+        let process = Process()
+        process.executableURL = executableURL
+        do {
+            try process.run()
+            NSApp.terminate(nil)
+        } catch {
+            setError("Accessibility enabled. Please restart the app manually. \(error.localizedDescription)")
+        }
     }
 }

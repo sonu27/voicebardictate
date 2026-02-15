@@ -11,7 +11,7 @@ struct VoiceBarDictateApp: App {
             MenuBarView()
                 .environmentObject(appState)
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
 
         WindowGroup("Settings", id: "settings") {
             SettingsView()
