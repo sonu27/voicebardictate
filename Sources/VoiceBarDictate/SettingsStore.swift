@@ -12,12 +12,13 @@ final class SettingsStore {
     private let defaults: UserDefaults
     private let keychain: KeychainService
     private let apiKeyAccount = "openai.api.key"
-    private let dotEnvFileURL: URL?
+    private let dotEnvAPIKey: String?
 
     init(defaults: UserDefaults = .standard, keychain: KeychainService = KeychainService()) {
         self.defaults = defaults
         self.keychain = keychain
-        self.dotEnvFileURL = Self.findDotEnvFileURL()
+        let dotEnvFileURL = Self.findDotEnvFileURL()
+        self.dotEnvAPIKey = dotEnvFileURL.flatMap { Self.loadAPIKeyFromDotEnv(at: $0) }
     }
 
     var model: String {
@@ -66,29 +67,29 @@ final class SettingsStore {
     }
 
     var isUsingDotEnvAPIKey: Bool {
-        dotEnvFileURL != nil
+        dotEnvAPIKey != nil
     }
 
     func loadAPIKey() -> String {
-        if let dotEnvFileURL {
-            return Self.loadAPIKeyFromDotEnv(at: dotEnvFileURL) ?? ""
+        if let dotEnvAPIKey {
+            return dotEnvAPIKey
         }
         return keychain.read(account: apiKeyAccount) ?? ""
     }
 
-    func saveAPIKey(_ apiKey: String) {
+    func saveAPIKey(_ apiKey: String) throws {
         let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if dotEnvFileURL != nil {
+        if dotEnvAPIKey != nil {
             // .env key is authoritative; skip Keychain writes to avoid prompts during local iteration.
             return
         }
 
         if trimmed.isEmpty {
-            keychain.delete(account: apiKeyAccount)
+            try keychain.delete(account: apiKeyAccount)
             return
         }
-        keychain.save(trimmed, account: apiKeyAccount)
+        try keychain.save(trimmed, account: apiKeyAccount)
     }
 
     private static func loadAPIKeyFromDotEnv(at url: URL) -> String? {

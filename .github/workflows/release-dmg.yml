@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "!*-ci"
   workflow_dispatch:
     inputs:
       tag_name:
@@ -25,13 +26,20 @@ jobs:
       - name: Resolve release tag
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
+            release_tag="${GITHUB_REF_NAME}"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "RELEASE_TAG=${{ inputs.tag_name }}" >> "${GITHUB_ENV}"
+            release_tag="${{ inputs.tag_name }}"
           else
             echo "Unable to determine release tag." >&2
             exit 1
           fi
+
+          if [[ "${release_tag}" == *"-ci"* ]]; then
+            echo "Release tags must not contain '-ci': ${release_tag}" >&2
+            exit 1
+          fi
+
+          echo "RELEASE_TAG=${release_tag}" >> "${GITHUB_ENV}"
 
       - name: Build app bundle (ad-hoc signed)
         run: BUILD_CONFIGURATION=release SIGNING_MODE=adhoc ./scripts/build-app-bundle.sh

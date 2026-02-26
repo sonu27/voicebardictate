@@ -55,7 +55,7 @@ final class EscapeKeyMonitor {
             eventsOfInterest: eventMask,
             callback: { _, eventType, event, userInfo in
                 guard let userInfo else {
-                    return Unmanaged.passRetained(event)
+                    return Unmanaged.passUnretained(event)
                 }
 
                 let monitor = Unmanaged<EscapeKeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
@@ -98,14 +98,14 @@ final class EscapeKeyMonitor {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         guard eventType == .keyDown else {
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
         guard isCaptureActive else {
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -123,7 +123,7 @@ final class EscapeKeyMonitor {
             return nil
         }
 
-        return Unmanaged.passRetained(event)
+        return Unmanaged.passUnretained(event)
     }
 
     private func handleFallback(_ event: NSEvent) {

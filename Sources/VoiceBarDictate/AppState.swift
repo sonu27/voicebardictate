@@ -13,7 +13,11 @@ final class AppState: ObservableObject {
 
     @Published var apiKey: String {
         didSet {
-            settingsStore.saveAPIKey(apiKey)
+            do {
+                try settingsStore.saveAPIKey(apiKey)
+            } catch {
+                setError("Could not save API key: \(error.localizedDescription)")
+            }
         }
     }
 
