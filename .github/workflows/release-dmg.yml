@@ -22,6 +22,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve release tag
         run: |
@@ -40,6 +43,14 @@ jobs:
           fi
 
           echo "RELEASE_TAG=${release_tag}" >> "${GITHUB_ENV}"
+
+      - name: Ensure release tag exists already
+        run: |
+          if ! git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "Tag '${RELEASE_TAG}' must exist before this workflow runs." >&2
+            echo "Create and push the tag locally; CI must not create tags." >&2
+            exit 1
+          fi
 
       - name: Build app bundle (ad-hoc signed)
         run: BUILD_CONFIGURATION=release SIGNING_MODE=adhoc ./scripts/build-app-bundle.sh
