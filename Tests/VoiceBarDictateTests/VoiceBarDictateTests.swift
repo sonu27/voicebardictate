@@ -253,3 +253,82 @@ private final class LockedArray: @unchecked Sendable {
         return storage
     }
 }
+
+@Suite("Interface formatting")
+struct InterfaceFormattingTests {
+    @Test func keyCapsFollowMenuOrder() {
+        #expect(Hotkey.default.keyCapLabels == ["⌃", "⌥", "Space"])
+
+        let all = Hotkey(
+            keyCode: UInt32(kVK_ANSI_D),
+            carbonModifiers: UInt32(cmdKey) | UInt32(shiftKey) | UInt32(optionKey) | UInt32(controlKey),
+            keyLabel: "D"
+        )
+        #expect(all.keyCapLabels == ["⌃", "⌥", "⇧", "⌘", "D"])
+    }
+
+    @Test func elapsedTime() {
+        #expect(DictationFormat.elapsed(0) == "0:00")
+        #expect(DictationFormat.elapsed(7.9) == "0:07")
+        #expect(DictationFormat.elapsed(102) == "1:42")
+        #expect(DictationFormat.elapsed(725) == "12:05")
+        #expect(DictationFormat.elapsed(-3) == "0:00")
+    }
+
+    @Test func relativeTimeSaysJustNowUnderAMinute() {
+        let now = Date()
+        #expect(DictationFormat.relative(now.addingTimeInterval(-20), now: now) == "just now")
+        #expect(DictationFormat.relative(now.addingTimeInterval(-120), now: now) != "just now")
+    }
+}
+
+@Suite("Silence detection")
+struct SilenceDetectorTests {
+    @Test func warnsOnlyAfterGracePeriodWithNoSound() {
+        let start = Date()
+        var detector = SilenceDetector(startedAt: start)
+        #expect(detector.update(level: 0, at: start.addingTimeInterval(1)) == false)
+        #expect(detector.update(level: 0.01, at: start.addingTimeInterval(3.9)) == false)
+        #expect(detector.update(level: 0, at: start.addingTimeInterval(4)) == true)
+    }
+
+    @Test func neverWarnsOnceSoundWasHeard() {
+        let start = Date()
+        var detector = SilenceDetector(startedAt: start)
+        #expect(detector.update(level: 0.4, at: start.addingTimeInterval(0.5)) == false)
+        #expect(detector.update(level: 0, at: start.addingTimeInterval(10)) == false)
+    }
+
+    @Test func soundAfterWarningClearsIt() {
+        let start = Date()
+        var detector = SilenceDetector(startedAt: start)
+        #expect(detector.update(level: 0, at: start.addingTimeInterval(5)) == true)
+        #expect(detector.update(level: 0.3, at: start.addingTimeInterval(6)) == false)
+    }
+}
+
+@Suite("Live text tail")
+struct LiveTextTailTests {
+    @Test func shortTextIsUnchanged() {
+        #expect(DictationFormat.tail("Hello world", maxCharacters: 20) == "Hello world")
+    }
+
+    @Test func longTextKeepsNewestWholeWords() {
+        let text = "one two three four five six seven"
+        #expect(DictationFormat.tail(text, maxCharacters: 12) == "…six seven")
+    }
+}
+
+@Suite("Accessibility prompt")
+struct AccessibilityPromptTests {
+    @Test func promptFlagPersists() {
+        let suite = "VoiceBarDictateTests.prompt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = SettingsStore(defaults: defaults, loadsDotEnv: false)
+        #expect(store.hasShownAccessibilityPrompt == false)
+        store.hasShownAccessibilityPrompt = true
+        #expect(SettingsStore(defaults: defaults, loadsDotEnv: false).hasShownAccessibilityPrompt)
+    }
+}

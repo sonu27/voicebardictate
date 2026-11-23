@@ -3,10 +3,12 @@
 Repository-specific instructions for coding agents working on `VoiceBarDictate`.
 
 ## Project Snapshot
-- App type: native macOS menu bar app (`MenuBarExtra`) built with SwiftUI + AppKit.
+- App type: native macOS menu bar app (`NSStatusItem` + SwiftUI views) built with SwiftUI + AppKit.
 - Package type: Swift Package executable target `VoiceBarDictate`.
 - Minimum platform: macOS 14 (Apple On-Device needs macOS 26; gate it with `#available`).
 - Primary source folder: `Sources/VoiceBarDictate`.
+- Dark mode only. `docs/design/voicebar-dark-mockups.html` is the visual reference for the popover, overlay, and
+  menu bar icon; `docs/design/README.md` lists the design rules. Match it when changing UI.
 
 ## Build and Run
 - Build with `swift build`.
@@ -25,6 +27,13 @@ Repository-specific instructions for coding agents working on `VoiceBarDictate`.
   - `SettingsStore` / `KeychainService`: persistence and secret handling.
   - `HotkeyManager`: Carbon global hotkey registration (pressed and released events).
   - `EscapeKeyMonitor`: Escape/Return capture while dictating.
+  - `AppWindows.swift`: AppKit shell. `StatusItemController` owns the menu bar icon (left-click toggles the panel,
+    right-click shows Settings and Quit) and hosts `MenuBarView` in a non-activating `PopoverPanel`;
+    `SettingsWindowController` hosts `SettingsView`. The app starts from an AppKit entry point
+    (`VoiceBarDictateApp.swift`), not SwiftUI scenes: `MenuBarExtra` cannot show a right-click menu.
+  - `MenuBarView`, `RecordingOverlay`, `MenuBarIcon`: UI only; colours and shared controls live in `Theme.swift`.
+    Popover actions that paste must close the panel and hand focus back to the previous app first
+    (`AppState.focusPreviousApplicationIfNeeded`).
 
 ## Behavior That Must Not Regress
 - Global shortcut defaults to `Control + Option + Space`.
@@ -43,6 +52,20 @@ Repository-specific instructions for coding agents working on `VoiceBarDictate`.
 - Keep dependency additions minimal. Prefer Apple frameworks already linked in `Package.swift`.
 - Avoid broad refactors unless explicitly requested.
 - `.env` API keys are a debug-build convenience only (`SettingsStore.dotEnvEnabled`); never enable them in release builds.
+
+## Local installs
+- Ad-hoc signatures change on every build, and macOS then drops the Accessibility and Keychain approvals. For a
+  copy in `/Applications`, sign with a real certificate so approvals survive rebuilds:
+  `SIGNING_MODE=selfcert CODE_SIGN_IDENTITY="<identity from security find-identity -v -p codesigning>" ./scripts/build-app-bundle.sh`
+- The app shows the system Accessibility prompt only once (`SettingsStore.hasShownAccessibilityPrompt`); after
+  that the popover's notice card links to System Settings.
+
+## UI snapshots
+- Debug builds render PNGs of the interface when launched with `VOICEBAR_SNAPSHOT_DIR=<dir>`: overlay states at
+  launch, popover states after `touch <dir>/cmd-popovers`. Use them to compare against the mockups.
+  `touch <dir>/cmd-toggle` opens the panel and `touch <dir>/cmd-dump` appends state and windows to `dump.log`.
+- Debug builds take a `.env` path from `VOICEBAR_DOTENV_PATH`, so `open --env VOICEBAR_DOTENV_PATH=…` can launch
+  the bundle the way Finder does without reading the Keychain.
 
 ## Manual Verification Checklist
 When changing runtime behavior, verify the impacted flow end-to-end:

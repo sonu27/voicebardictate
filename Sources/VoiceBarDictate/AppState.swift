@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 import Observation
 import Speech
@@ -10,6 +11,26 @@ enum DictationPhase: Equatable {
     case starting
     case recording
     case transcribing
+}
+
+/// The one notice the popover shows between the engine switch and the last transcript, highest priority first.
+enum PopoverNotice: Equatable {
+    case downloading(progress: Double, languageName: String)
+    case accessibilityMissing
+    case microphoneDenied
+    case apiKeyMissing
+    case onDeviceUnavailable
+    case error(String)
+    /// A one-off notice, e.g. that a retired OpenAI model was replaced.
+    case info(String)
+}
+
+/// What the menu bar icon shows.
+enum MenuBarIconState: Equatable {
+    case idle
+    case recording
+    case transcribing
+    case downloading(progress: Double)
 }
 
 /// Editable settings, saved together from the Settings window.
@@ -37,9 +58,19 @@ final class AppState {
     private(set) var statusMessage = "Ready"
     private(set) var errorMessage: String?
     private(set) var lastTranscript = ""
+    private(set) var lastTranscriptDate: Date?
     private(set) var launchAtLogin = false
     /// 0...1 while the Apple On-Device language model downloads, otherwise nil.
     private(set) var appleModelDownloadProgress: Double?
+    /// The display name of the language being downloaded, e.g. "English (United Kingdom)".
+    private(set) var appleModelDownloadLanguageName = ""
+    /// When the current recording began; drives the timers in the popover and the overlay.
+    private(set) var recordingStartedAt: Date?
+    /// Partial text from a live (on-device) transcriber while recording.
+    private(set) var liveText = ""
+    private(set) var hasAccessibilityPermission = AXIsProcessTrusted()
+    private(set) var isMicrophoneDenied = false
+    private(set) var infoMessage: String?
 
     private(set) var apiKey: String
     private(set) var model: TranscriptionModel
@@ -77,12 +108,37 @@ final class AppState {
         )
     }
 
-    var menuBarSymbolName: String {
+    var menuBarIconState: MenuBarIconState {
         switch phase {
-        case .recording: return "waveform.circle.fill"
-        case .transcribing: return "waveform.circle"
-        case .idle, .starting: return "waveform"
+        case .recording: return .recording
+        case .transcribing: return .transcribing
+        case .idle, .starting:
+            if let progress = appleModelDownloadProgress { return .downloading(progress: progress) }
+            return .idle
         }
+    }
+
+    var isOnDeviceSupported: Bool {
+        if #available(macOS 26.0, *) { return true }
+        return false
+    }
+
+    /// True while the on-device model is still downloading, so dictation with it cannot start yet.
+    var isWaitingForAppleModel: Bool {
+        model == .appleOnDevice && appleModelDownloadProgress != nil
+    }
+
+    var notice: PopoverNotice? {
+        if model == .appleOnDevice, let progress = appleModelDownloadProgress {
+            return .downloading(progress: progress, languageName: appleModelDownloadLanguageName)
+        }
+        if !hasAccessibilityPermission { return .accessibilityMissing }
+        if isMicrophoneDenied { return .microphoneDenied }
+        if model == .gptTranscribe, apiKey.isEmpty { return .apiKeyMissing }
+        if model == .appleOnDevice, !isOnDeviceSupported { return .onDeviceUnavailable }
+        if let errorMessage { return .error(errorMessage) }
+        if let infoMessage { return .info(infoMessage) }
+        return nil
     }
 
     @ObservationIgnored private let settingsStore: SettingsStore
@@ -105,6 +161,11 @@ final class AppState {
     @ObservationIgnored private var accessibilityStartupTask: Task<Void, Never>?
     @ObservationIgnored private var startupAccessibilityCheckDidRun = false
     @ObservationIgnored private var isWaitingForAccessibilityGrant = false
+    @ObservationIgnored private var silenceDetector = SilenceDetector()
+    @ObservationIgnored private var inputDeviceName = ""
+    /// The last app other than this one to become active, so popover actions can paste back into it.
+    @ObservationIgnored private var previousApplication: NSRunningApplication?
+    @ObservationIgnored private var appActivationObserver: NSObjectProtocol?
 
     private enum ActiveRecording {
         /// Audio is written to a file and uploaded after recording stops.
@@ -138,14 +199,20 @@ final class AppState {
         escapeKeyMonitor.onReturnPressed = { [weak self] in
             MainActor.assumeIsolated { self?.handleReturnPressed() }
         }
+        // The overlay's Insert and Cancel buttons do what Return and Escape do.
+        recordingOverlay.onInsert = { [weak self] in self?.handleReturnPressed() }
+        recordingOverlay.onCancel = { [weak self] in self?.handleEscapePressed() }
         recorderService.onInputInterrupted = { [weak self] in
             self?.handleInputInterrupted()
         }
 
         registerHotkey()
+        trackPreviousApplication()
+        refreshPermissions()
 
         if let legacyModelID = settingsStore.migratedLegacyModelID {
             statusMessage = "\(legacyModelID) was retired. Now using \(openAIModelID)."
+            infoMessage = statusMessage
         }
 
         syncLaunchAtLoginPreferenceAtStartup()
@@ -158,8 +225,55 @@ final class AppState {
 
     // MARK: - Menu and Settings actions
 
+    /// The popover's primary button. The popover closes itself first; this hands focus back to the app the
+    /// user was typing in, so the transcript is pasted there and not into this app's panel.
     func toggleFromMenu() {
-        handleToggleRequest()
+        Task {
+            await focusPreviousApplicationIfNeeded()
+            handleToggleRequest()
+        }
+    }
+
+    func setEngine(_ newModel: TranscriptionModel) {
+        guard canChangeModel, newModel != model else { return }
+        var draft = currentSettings
+        draft.model = newModel
+        saveSettings(draft)
+    }
+
+    /// Re-reads permission states that can change in System Settings while the app runs.
+    func refreshPermissions() {
+        hasAccessibilityPermission = textInjector.hasAccessibilityPermission(promptIfNeeded: false)
+        isMicrophoneDenied = recorderService.isPermissionDenied
+    }
+
+    func dismissError() {
+        clearError()
+    }
+
+    func dismissInfo() {
+        infoMessage = nil
+    }
+
+    func openAccessibilitySettings() {
+        openPrivacySettings(anchor: "Privacy_Accessibility")
+        monitorAccessibilityPermissionUntilGranted()
+    }
+
+    func openMicrophoneSettings() {
+        openPrivacySettings(anchor: "Privacy_Microphone")
+    }
+
+    private func openPrivacySettings(anchor: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Pastes the last transcript again into the app the user was in before opening the popover.
+    func pasteLastTranscript() {
+        guard phase == .idle, !lastTranscript.isEmpty else { return }
+        let text = lastTranscript
+        Task { await insert(text) }
     }
 
     func saveSettings(_ draft: SettingsDraft) {
@@ -223,6 +337,7 @@ final class AppState {
 
     func promptAccessibilityPermission() {
         if textInjector.hasAccessibilityPermission(promptIfNeeded: true) {
+            hasAccessibilityPermission = true
             escapeKeyMonitor.enableExclusiveCaptureIfPossible()
             statusMessage = "Accessibility permission is enabled."
             clearError()
@@ -236,6 +351,57 @@ final class AppState {
         guard !lastTranscript.isEmpty else { return }
         TextInjector.copyToClipboard(lastTranscript)
         statusMessage = "Last transcript copied."
+    }
+
+    // MARK: - Focus
+
+    private func trackPreviousApplication() {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        if let frontmost = NSWorkspace.shared.frontmostApplication, frontmost.processIdentifier != ownPID {
+            previousApplication = frontmost
+        }
+        appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard
+                let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                app.processIdentifier != ownPID
+            else {
+                return
+            }
+            MainActor.assumeIsolated { self?.previousApplication = app }
+        }
+    }
+
+    private static func isSettingsWindow(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue.hasPrefix("settings") == true || window.title == "VoiceBar Settings"
+    }
+
+    /// When this app is frontmost (the popover was just used), reactivates the previous app and waits for it,
+    /// so a synthetic Cmd+V reaches the user's text field. Does nothing for hotkey-driven dictation.
+    private func focusPreviousApplicationIfNeeded() async {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        // Leave focus alone when the user is typing in this app's own Settings window.
+        if let keyWindow = NSApp.keyWindow, Self.isSettingsWindow(keyWindow) {
+            return
+        }
+        MenuBarPanel.close()
+        guard
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == ownPID || NSApp.isActive,
+            let target = previousApplication,
+            !target.isTerminated
+        else {
+            return
+        }
+
+        target.activate()
+        for _ in 0..<20 where NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        // Give the app a moment to restore its key window and text focus.
+        try? await Task.sleep(for: .milliseconds(80))
     }
 
     private func setHotkey(_ newHotkey: Hotkey) {
@@ -379,8 +545,8 @@ final class AppState {
 
     private func failStart(_ message: String) {
         phase = .idle
-        recordingOverlay.hide()
         setError(message)
+        recordingOverlay.showError(title: "Couldn't start dictation", detail: message)
     }
 
     private func performStart(generation: Int) async {
@@ -393,6 +559,7 @@ final class AppState {
         }
 
         let microphonePermission = await recorderService.requestPermission()
+        isMicrophoneDenied = recorderService.isPermissionDenied
         guard isCurrentStart(generation) else { return }
         guard microphonePermission else {
             failStart("Microphone permission is not granted. Enable it in System Settings > Privacy & Security > Microphone.")
@@ -417,9 +584,35 @@ final class AppState {
             return
         }
 
+        let startedAt = Date()
+        recordingStartedAt = startedAt
+        liveText = ""
         phase = .recording
         statusMessage = "Recording..."
-        startRecordingLevelUpdates()
+        // Accessibility may have been granted since launch; try for system-wide Return/Escape again.
+        if !escapeKeyMonitor.hasExclusiveCapture {
+            escapeKeyMonitor.enableExclusiveCaptureIfPossible()
+        }
+        recordingOverlay.showListening(
+            startedAt: startedAt,
+            hints: ListeningHints(
+                releaseToInsert: hotkeyMode == .hold && isHoldingHotkey,
+                capturesKeys: escapeKeyMonitor.hasExclusiveCapture
+            )
+        )
+        startRecordingLevelUpdates(startedAt: startedAt)
+    }
+
+    private func updateLiveText(_ text: String) {
+        guard phase == .recording else { return }
+        liveText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        recordingOverlay.updateLiveText(liveText)
+    }
+
+    private func endRecordingState() {
+        stopRecordingLevelUpdates()
+        recordingStartedAt = nil
+        liveText = ""
     }
 
     /// Returns nil when the start was abandoned (cancelled, or the language model still needs downloading).
@@ -436,7 +629,7 @@ final class AppState {
         }
         if let request = try await AppleSpeechModel.installationRequest(for: locale) {
             guard isCurrentStart(generation) else { return nil }
-            startAppleModelDownload(request, announceCompletion: true)
+            startAppleModelDownload(request, locale: locale, announceCompletion: true)
             reportAppleModelDownloadInProgress()
             return nil
         }
@@ -448,7 +641,7 @@ final class AppState {
         let startTask = Task { [weak self] in
             do {
                 let handler = try await session.start(inputFormat: sink.inputFormat) { text in
-                    self?.recordingOverlay.updateLiveText(text)
+                    self?.updateLiveText(text)
                 }
                 sink.attachBufferHandler(handler)
             } catch {
@@ -463,21 +656,21 @@ final class AppState {
         guard case .live(let active, _) = activeRecording, active === session else { return }
         cancelRecording()
         setError("Apple On-Device could not start: \(error.localizedDescription)")
+        recordingOverlay.showError(title: "Couldn't start on-device dictation", detail: error.localizedDescription)
     }
 
     private func stopAndTranscribe() async {
         guard phase == .recording, let recording = activeRecording else { return }
         activeRecording = nil
-        stopRecordingLevelUpdates()
+        endRecordingState()
         phase = .transcribing
-        recordingOverlay.showTranscribing()
+        recordingOverlay.showTranscribing(engineName: model == .appleOnDevice ? "On-device" : "OpenAI")
         statusMessage = "Transcribing..."
 
         let audioFileURL = recorderService.stopRecording()
         defer {
             transcriptionTask = nil
             phase = .idle
-            recordingOverlay.hide()
             if let audioFileURL {
                 try? FileManager.default.removeItem(at: audioFileURL)
             }
@@ -487,7 +680,7 @@ final class AppState {
         switch recording {
         case .openAI:
             guard let audioFileURL else {
-                setError("Could not stop and transcribe: no audio was recorded.")
+                failTranscription("No audio was recorded.")
                 return
             }
             let client = transcriptionClient
@@ -514,32 +707,60 @@ final class AppState {
         }
         transcriptionTask = task
 
+        let normalizedText: String
         do {
             let transcript = try await task.value
             guard !task.isCancelled else { throw CancellationError() }
-
-            let normalizedText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedText.isEmpty else {
-                statusMessage = "No speech detected."
-                return
-            }
-
-            lastTranscript = normalizedText
-
-            do {
-                try await textInjector.inject(text: normalizedText)
-                clearError()
-                statusMessage = "Transcribed and pasted."
-            } catch {
-                setError("Transcribed but failed to paste automatically: \(error.localizedDescription)")
-            }
+            normalizedText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             if error is CancellationError || task.isCancelled {
                 clearError()
                 statusMessage = "Dictation canceled."
+                recordingOverlay.hide()
             } else {
-                setError("Could not stop and transcribe: \(error.localizedDescription)")
+                failTranscription(error.localizedDescription)
             }
+            return
+        }
+
+        guard !normalizedText.isEmpty else {
+            statusMessage = "No speech detected."
+            recordingOverlay.showMessage("No speech detected.")
+            return
+        }
+
+        lastTranscript = normalizedText
+        lastTranscriptDate = Date()
+        await insert(normalizedText)
+    }
+
+    private func failTranscription(_ detail: String) {
+        setError("Could not transcribe: \(detail)")
+        recordingOverlay.showError(title: "Couldn't transcribe", detail: detail)
+    }
+
+    /// Pastes `text` into the frontmost app and reports the result in the overlay.
+    /// If pasting is impossible, the transcript is left on the clipboard instead.
+    private func insert(_ text: String) async {
+        await focusPreviousApplicationIfNeeded()
+        // Clear the overlay as the text lands, rather than after the clipboard restore delay inside `inject`.
+        recordingOverlay.hide()
+        do {
+            try await textInjector.inject(text: text)
+            clearError()
+            statusMessage = "Transcribed and pasted."
+        } catch {
+            // `inject` throws before it touches the clipboard, so put the transcript there for a manual paste.
+            TextInjector.copyToClipboard(text)
+            refreshPermissions()
+            let reason = (error as? TextInjectionError) == .accessibilityPermissionMissing
+                ? "Accessibility access is off."
+                : "macOS didn't accept the paste."
+            setError("Transcribed but couldn't paste. \(reason) The transcript is on your clipboard.")
+            recordingOverlay.showError(
+                title: "Couldn't paste the transcript",
+                detail: "\(reason) The transcript is on your clipboard. Press ⌘V to paste it."
+            )
         }
     }
 
@@ -555,7 +776,7 @@ final class AppState {
             Task { await session.cancel() }
         }
 
-        stopRecordingLevelUpdates()
+        endRecordingState()
         phase = .idle
         recordingOverlay.hide()
         clearError()
@@ -567,16 +788,21 @@ final class AppState {
         statusMessage = "Canceling..."
     }
 
-    private func startRecordingLevelUpdates() {
+    private func startRecordingLevelUpdates(startedAt: Date) {
         stopRecordingLevelUpdates()
-        recordingOverlay.showRecording(level: 0)
+        silenceDetector = SilenceDetector(startedAt: startedAt)
+        inputDeviceName = recorderService.defaultInputDeviceName ?? "your microphone"
 
         recordingLevelTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 let sample = recorderService.currentInputLevel()
                 recordingLevel = Self.smoothedLevel(previous: recordingLevel, next: sample)
-                recordingOverlay.updateRecordingLevel(recordingLevel)
+                let isSilent = silenceDetector.update(level: sample)
+                recordingOverlay.updateLevel(
+                    recordingLevel,
+                    silentDeviceName: isSilent ? inputDeviceName : nil
+                )
                 try? await Task.sleep(for: .milliseconds(70))
             }
         }
@@ -610,13 +836,14 @@ final class AppState {
             else {
                 return
             }
-            startAppleModelDownload(request, announceCompletion: false)
+            startAppleModelDownload(request, locale: locale, announceCompletion: false)
             statusMessage = "Downloading the Apple On-Device language model..."
         }
     }
 
     @available(macOS 26.0, *)
-    private func startAppleModelDownload(_ request: AssetInstallationRequest, announceCompletion: Bool) {
+    private func startAppleModelDownload(_ request: AssetInstallationRequest, locale: Locale, announceCompletion: Bool) {
+        appleModelDownloadLanguageName = Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
         appleModelDownloadProgress = 0
         appleModelDownloadTask = Task {
             let progressTask = Task {
@@ -635,7 +862,7 @@ final class AppState {
                 try await request.downloadAndInstall()
                 statusMessage = "Apple On-Device is ready."
                 if announceCompletion {
-                    recordingOverlay.showMessage("Apple On-Device is ready. Press \(hotkey.displayString) to dictate.")
+                    recordingOverlay.showMessage("On-device dictation is ready. Press \(hotkey.displayString) to dictate.")
                 }
             } catch {
                 setError("Could not download the Apple On-Device language model: \(error.localizedDescription)")
@@ -645,7 +872,7 @@ final class AppState {
 
     private func reportAppleModelDownloadInProgress() {
         let percent = Int(((appleModelDownloadProgress ?? 0) * 100).rounded())
-        let message = "Downloading the Apple On-Device language model (\(percent)%). Try again when it finishes."
+        let message = "The on-device model is downloading (\(percent)%). Dictation is available when it finishes."
         phase = .idle
         statusMessage = message
         recordingOverlay.showMessage(message)
@@ -679,12 +906,17 @@ final class AppState {
 
         guard !textInjector.hasAccessibilityPermission(promptIfNeeded: false) else { return }
 
-        if textInjector.hasAccessibilityPermission(promptIfNeeded: true) {
-            handleAccessibilityGranted()
-            return
+        // Show the system prompt once. After that the popover's notice card says what's missing and links to
+        // System Settings, instead of a prompt at every launch.
+        if !settingsStore.hasShownAccessibilityPrompt {
+            settingsStore.hasShownAccessibilityPrompt = true
+            if textInjector.hasAccessibilityPermission(promptIfNeeded: true) {
+                handleAccessibilityGranted()
+                return
+            }
         }
 
-        setError("Grant Accessibility permission in System Settings > Privacy & Security > Accessibility. VoiceBarDictate will pick it up automatically.")
+        hasAccessibilityPermission = false
         monitorAccessibilityPermissionUntilGranted()
     }
 
@@ -705,6 +937,7 @@ final class AppState {
 
     /// Creates the key-capture event tap now that it is allowed. Relaunches only if that still fails.
     private func handleAccessibilityGranted() {
+        hasAccessibilityPermission = true
         guard isWaitingForAccessibilityGrant || !escapeKeyMonitor.hasExclusiveCapture else { return }
         isWaitingForAccessibilityGrant = false
         accessibilityPermissionTask?.cancel()
@@ -752,3 +985,50 @@ final class AppState {
         settingsStore.startAtLogin = effectiveState
     }
 }
+
+#if DEBUG
+extension AppState {
+    /// The popover scenarios drawn in `docs/design/voicebar-dark-mockups.html`.
+    enum DebugScenario: String, CaseIterable {
+        case idleOnDevice = "popover-idle"
+        case recording = "popover-recording"
+        case downloading = "popover-downloading"
+        case holdOpenAIPermissionMissing = "popover-hold-openai"
+    }
+
+    /// Puts in-memory state into a scenario for snapshots. Nothing is persisted, and `restore` undoes it.
+    func debugApply(_ scenario: DebugScenario) -> () -> Void {
+        let saved = (phase, model, hotkeyMode, lastTranscript, lastTranscriptDate, liveText, recordingStartedAt,
+                     appleModelDownloadProgress, appleModelDownloadLanguageName, hasAccessibilityPermission, errorMessage)
+        errorMessage = nil
+        hasAccessibilityPermission = true
+        switch scenario {
+        case .idleOnDevice:
+            model = .appleOnDevice
+            lastTranscript = "Could you check the PostgreSQL connection before the meeting?"
+            lastTranscriptDate = Date().addingTimeInterval(-120)
+        case .recording:
+            model = .appleOnDevice
+            recordingStartedAt = Date().addingTimeInterval(-7)
+            liveText = "Could you check the PostgreSQL connection before the meet"
+            phase = .recording
+        case .downloading:
+            model = .appleOnDevice
+            appleModelDownloadProgress = 0.62
+            appleModelDownloadLanguageName = "English (United Kingdom)"
+            lastTranscript = "Send the release notes to the design channel."
+            lastTranscriptDate = Date().addingTimeInterval(-86_400)
+        case .holdOpenAIPermissionMissing:
+            model = .gptTranscribe
+            hotkeyMode = .hold
+            hasAccessibilityPermission = false
+            lastTranscript = ""
+            lastTranscriptDate = nil
+        }
+        return { [self] in
+            (phase, model, hotkeyMode, lastTranscript, lastTranscriptDate, liveText, recordingStartedAt,
+             appleModelDownloadProgress, appleModelDownloadLanguageName, hasAccessibilityPermission, errorMessage) = saved
+        }
+    }
+}
+#endif

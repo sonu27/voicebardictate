@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VoiceBar dark-mode reference mockups</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<style>
+:root{--bg-neutral:#121317;--text-primary:#f2f3f5;--text-secondary:#8d939e;--font-sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+body{margin:0;padding:32px;background:#0b0c0f;display:flex;justify-content:center}
+body>.mk{max-width:720px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<h2 class="sr-only">Full dark-mode VoiceBar mockups: menu bar icon states, four popover states, and seven recording overlay states, all with a single blue accent.</h2>
+<style>
+.mk{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;color:#f2f3f5}
+.pop{width:316px;background:#1f2229;border:0.5px solid #3a3f4a;border-radius:14px;padding:12px;box-sizing:border-box}
+.hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ttl{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+.pb{background:#2f6fe8;border-radius:8px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between}
+.pbl{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500}
+.kc{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;background:rgba(255,255,255,.18);font-size:11px;color:#fff;box-sizing:border-box}
+.kd{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font-size:11px;box-sizing:border-box;background:#2b2f38;color:#c9cdd6;border:0.5px solid #454b57}
+.seg{display:flex;background:#15171c;border-radius:7px;padding:2px;font-size:12px;margin-top:10px}
+.seg div{flex:1;text-align:center;padding:4px 0;border-radius:5px;color:#a7adb8}
+.seg .on{background:#3a3f4a;color:#fff}
+.cap{font-size:11px;color:#a7adb8;display:flex;align-items:center;gap:5px;margin:7px 2px 10px}
+.lt{border-top:0.5px solid #343944;padding-top:9px}
+.lbl{font-size:11px;color:#8d939e}
+.tx{font-size:12px;line-height:1.45;color:#dfe2e7}
+.ov{width:340px;background:#1b1d22;border:0.5px solid #3a3f4a;border-radius:14px;padding:10px 12px;box-sizing:border-box}
+.sm{width:200px;display:flex;align-items:center;gap:8px}
+.row{display:flex;align-items:center;gap:8px}
+.ft{display:flex;justify-content:space-between;font-size:11px;color:#8d939e;border-top:0.5px solid #30343d;padding-top:7px;margin-top:8px}
+.ft span{display:flex;align-items:center;gap:5px}
+.bars{display:flex;align-items:center;gap:2px;height:16px;margin-left:auto}
+.bars i{display:block;width:3px;border-radius:2px;background:#4c8dff}
+.dot{width:8px;height:8px;border-radius:50%;background:#4c8dff;box-shadow:0 0 0 3px rgba(76,141,255,.25)}
+.tm{font-size:12px;color:#8d939e;font-variant-numeric:tabular-nums}
+.tag{font-size:11px;color:var(--text-secondary);margin:0 0 6px;font-family:var(--font-sans)}
+.mb{display:flex;align-items:center;justify-content:center;width:34px;height:22px;border-radius:5px;background:#2a2d34;color:#c9cdd6;font-size:15px}
+.sec{font-size:13px;font-weight:500;color:var(--text-primary);font-family:var(--font-sans);margin:0 0 10px}
+</style>
+<div class="mk" style="background:var(--bg-neutral);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:26px">
+
+<div>
+ <p class="sec">Menu bar icon</p>
+ <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:center;font-family:var(--font-sans);font-size:11px;color:var(--text-secondary)">
+  <span style="display:flex;align-items:center;gap:7px"><span class="mb"><i class="ti ti-wave-sine" aria-hidden="true"></i></span>Idle</span>
+  <span style="display:flex;align-items:center;gap:7px"><span class="mb" style="background:#2f6fe8;color:#fff"><i class="ti ti-wave-sine" aria-hidden="true"></i></span>Recording</span>
+  <span style="display:flex;align-items:center;gap:7px"><span class="mb"><i class="ti ti-dots" aria-hidden="true"></i></span>Transcribing</span>
+  <span style="display:flex;align-items:center;gap:7px"><span class="mb"><span style="width:12px;height:12px;border-radius:50%;border:2px solid #4c4f57;border-top-color:#4c8dff;border-right-color:#4c8dff;box-sizing:border-box"></span></span>Downloading</span>
+ </div>
+</div>
+
+<div>
+ <p class="sec">Popover</p>
+ <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center">
+
+  <div><p class="tag">Idle, on-device</p>
+  <div class="pop">
+   <div class="hd"><div class="ttl"><i class="ti ti-wave-sine" style="font-size:16px;color:#4c8dff" aria-hidden="true"></i>VoiceBar</div><i class="ti ti-dots" style="font-size:16px;color:#a7adb8" aria-label="More"></i></div>
+   <div class="pb"><div class="pbl"><i class="ti ti-microphone" style="font-size:16px" aria-hidden="true"></i>Start dictation</div><div style="display:flex;gap:3px"><span class="kc">⌃</span><span class="kc">⌥</span><span class="kc">Space</span></div></div>
+   <div class="seg"><div class="on">On-device</div><div>OpenAI</div></div>
+   <div class="cap"><i class="ti ti-shield-check" style="font-size:13px" aria-hidden="true"></i>Audio stays on this Mac</div>
+   <div class="lt">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span class="lbl">Last transcript · 2 min ago</span><span style="display:flex;gap:10px;color:#a7adb8;font-size:14px"><i class="ti ti-copy" aria-label="Copy"></i><i class="ti ti-clipboard-text" aria-label="Paste again"></i></span></div>
+    <div class="tx">Could you check the PostgreSQL connection before the meeting?</div>
+   </div>
+  </div></div>
+
+  <div><p class="tag">Recording</p>
+  <div class="pop">
+   <div class="hd"><div class="ttl"><i class="ti ti-wave-sine" style="font-size:16px;color:#4c8dff" aria-hidden="true"></i>VoiceBar</div><i class="ti ti-dots" style="font-size:16px;color:#a7adb8" aria-label="More"></i></div>
+   <div class="pb"><div class="pbl"><i class="ti ti-player-stop" style="font-size:16px" aria-hidden="true"></i>Stop and insert</div><span style="display:flex;align-items:center;gap:6px;font-size:12px;font-variant-numeric:tabular-nums;color:#dbe7ff"><span style="width:6px;height:6px;border-radius:50%;background:#fff"></span>0:07</span></div>
+   <div class="tx" style="margin:10px 2px">Could you check the PostgreSQL connection before the<span style="color:#8d939e"> meet…</span></div>
+   <div class="seg" style="opacity:.55"><div class="on">On-device</div><div>OpenAI</div></div>
+   <div style="font-size:11px;color:#8d939e;margin:7px 2px 0">You can switch engines after this dictation.</div>
+  </div></div>
+
+  <div><p class="tag">Model downloading</p>
+  <div class="pop">
+   <div class="hd"><div class="ttl"><i class="ti ti-wave-sine" style="font-size:16px;color:#4c8dff" aria-hidden="true"></i>VoiceBar</div><i class="ti ti-dots" style="font-size:16px;color:#a7adb8" aria-label="More"></i></div>
+   <div class="pb" style="opacity:.5"><div class="pbl"><i class="ti ti-microphone" style="font-size:16px" aria-hidden="true"></i>Start dictation</div><div style="display:flex;gap:3px"><span class="kc">⌃</span><span class="kc">⌥</span><span class="kc">Space</span></div></div>
+   <div class="seg"><div class="on">On-device</div><div>OpenAI</div></div>
+   <div style="background:#262a32;border:0.5px solid #3a3f4a;border-radius:8px;padding:8px 10px;margin:10px 0">
+    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px"><span>Downloading English (UK) model</span><span style="color:#a7adb8;font-variant-numeric:tabular-nums">62%</span></div>
+    <div style="height:4px;border-radius:2px;background:#3a3f4a"><div style="width:62%;height:4px;border-radius:2px;background:#4c8dff"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:#8d939e;margin-top:6px"><span>Dictation is available when this finishes</span><span style="color:#4c8dff">Cancel</span></div>
+   </div>
+   <div class="lt">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span class="lbl">Last transcript · yesterday</span><span style="display:flex;gap:10px;color:#a7adb8;font-size:14px"><i class="ti ti-copy" aria-label="Copy"></i><i class="ti ti-clipboard-text" aria-label="Paste again"></i></span></div>
+    <div class="tx">Send the release notes to the design channel.</div>
+   </div>
+  </div></div>
+
+  <div><p class="tag">Hold mode, OpenAI, permission missing</p>
+  <div class="pop">
+   <div class="hd"><div class="ttl"><i class="ti ti-wave-sine" style="font-size:16px;color:#4c8dff" aria-hidden="true"></i>VoiceBar</div><i class="ti ti-dots" style="font-size:16px;color:#a7adb8" aria-label="More"></i></div>
+   <div class="pb"><div class="pbl"><i class="ti ti-microphone" style="font-size:16px" aria-hidden="true"></i>Hold to dictate</div><div style="display:flex;gap:3px"><span class="kc">⌃</span><span class="kc">⌥</span><span class="kc">Space</span></div></div>
+   <div class="seg"><div>On-device</div><div class="on">OpenAI</div></div>
+   <div class="cap"><i class="ti ti-cloud-upload" style="font-size:13px" aria-hidden="true"></i>Audio is sent to OpenAI · gpt-transcribe</div>
+   <div style="background:#3a2f17;border:0.5px solid #6b5420;border-radius:8px;padding:7px 9px;margin-bottom:10px;display:flex;gap:8px;align-items:flex-start">
+    <i class="ti ti-alert-triangle" style="font-size:14px;color:#f0b44c;margin-top:1px" aria-hidden="true"></i>
+    <div style="font-size:11px;line-height:1.4;color:#f3dcae">Accessibility access is off, so transcripts can't be pasted.<div style="color:#f0b44c;margin-top:3px">Open System Settings</div></div>
+   </div>
+   <div class="lt"><div class="lbl" style="margin-bottom:4px">No transcripts yet</div><div style="font-size:12px;color:#a7adb8">Hold the shortcut, speak, then let go.</div></div>
+  </div></div>
+
+ </div>
+</div>
+
+<div>
+ <p class="sec">Overlay</p>
+ <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+
+  <div><p class="tag">Listening with live text</p>
+  <div class="ov">
+   <div class="row"><span class="dot"></span><span style="font-size:13px;font-weight:500">Listening</span><span class="tm">0:07</span><div class="bars"><i style="height:4px"></i><i style="height:8px"></i><i style="height:13px"></i><i style="height:16px"></i><i style="height:11px"></i><i style="height:14px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:5px"></i><i style="height:3px"></i></div></div>
+   <div class="tx" style="margin-top:7px">Could you check the PostgreSQL connection before the<span style="color:#8d939e"> meet…</span></div>
+   <div class="ft"><span><span class="kd">↩</span>Insert</span><span><span class="kd">esc</span>Cancel</span></div>
+  </div></div>
+
+  <div><p class="tag">Hold mode, OpenAI (no live text)</p>
+  <div class="ov">
+   <div class="row"><span class="dot"></span><span style="font-size:13px;font-weight:500">Listening</span><span class="tm">0:03</span><div class="bars"><i style="height:5px"></i><i style="height:9px"></i><i style="height:14px"></i><i style="height:11px"></i><i style="height:16px"></i><i style="height:8px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:4px"></i><i style="height:3px"></i></div></div>
+   <div class="ft"><span><i class="ti ti-hand-stop" style="font-size:13px" aria-hidden="true"></i>Release to insert</span><span><span class="kd">esc</span>Cancel</span></div>
+  </div></div>
+
+  <div><p class="tag">Long dictation</p>
+  <div class="ov">
+   <div class="row"><span class="dot"></span><span style="font-size:13px;font-weight:500">Listening</span><span class="tm">1:42</span><div class="bars"><i style="height:3px"></i><i style="height:7px"></i><i style="height:12px"></i><i style="height:15px"></i><i style="height:9px"></i><i style="height:13px"></i><i style="height:6px"></i><i style="height:10px"></i><i style="height:4px"></i><i style="height:3px"></i></div></div>
+   <div class="tx" style="margin-top:7px"><span style="color:#8d939e">…</span>and once that's done we can move the migration to Thursday, then send the summary to the whole team before<span style="color:#8d939e"> lun…</span></div>
+   <div class="ft"><span><span class="kd">↩</span>Insert</span><span><span class="kd">esc</span>Cancel</span></div>
+  </div></div>
+
+  <div><p class="tag">No audio</p>
+  <div class="ov">
+   <div class="row"><span class="dot"></span><span style="font-size:13px;font-weight:500">Listening</span><span class="tm">0:05</span><div class="bars"><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i><i style="height:3px;background:#4c4f57"></i></div></div>
+   <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#f0b44c;margin-top:8px"><i class="ti ti-microphone-off" style="font-size:13px" aria-hidden="true"></i>No audio from MacBook Pro Microphone. Check your input device.</div>
+  </div></div>
+
+  <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+   <div><p class="tag">Transcribing</p>
+   <div class="ov sm"><i class="ti ti-loader-2" style="font-size:15px;color:#4c8dff" aria-hidden="true"></i><span style="font-size:12px;font-weight:500">Transcribing…</span><span style="font-size:11px;color:#8d939e;margin-left:auto">OpenAI</span></div></div>
+   <div><p class="tag">Inserted</p>
+   <div class="ov sm"><i class="ti ti-circle-check" style="font-size:15px;color:#4c8dff" aria-hidden="true"></i><span style="font-size:12px;font-weight:500">Inserted</span><span style="font-size:11px;color:#8d939e;margin-left:auto">11 words</span></div></div>
+  </div>
+
+  <div><p class="tag">Error</p>
+  <div class="ov" style="display:flex;align-items:flex-start;gap:8px">
+   <i class="ti ti-alert-circle" style="font-size:15px;color:#ff6961;margin-top:1px" aria-hidden="true"></i>
+   <div style="font-size:12px;line-height:1.4"><span style="font-weight:500">Couldn't paste into this app</span><div style="color:#a7adb8;font-size:11px;margin-top:2px">The transcript is on your clipboard. Press ⌘V to paste it.</div></div>
+  </div></div>
+
+ </div>
+</div>
+
+</div>
+</body>
+</html>

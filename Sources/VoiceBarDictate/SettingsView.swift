@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeWindow) private var dismiss
 
     @State private var draft = SettingsDraft(
         apiKey: "",

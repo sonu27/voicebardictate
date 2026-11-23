@@ -12,6 +12,17 @@ final class AudioRecorderService {
     private var sink: RecordingSink?
     private var configurationObserver: NSObjectProtocol?
 
+    /// True when the user has refused microphone access (asking again would not show a prompt).
+    var isPermissionDenied: Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        return status == .denied || status == .restricted
+    }
+
+    /// The name of the default input device, e.g. "MacBook Pro Microphone".
+    var defaultInputDeviceName: String? {
+        AVCaptureDevice.default(for: .audio)?.localizedName
+    }
+
     func requestPermission() async -> Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         switch status {
@@ -338,5 +349,27 @@ enum RecorderError: LocalizedError {
         case .recordingFailed(let reason):
             return "The audio engine could not start: \(reason)"
         }
+    }
+}
+
+/// Flags a recording that has heard nothing at all, which usually means the wrong input device or a muted mic.
+/// Once any sound is heard it never fires again, so a quiet pause mid-sentence does not trigger it.
+struct SilenceDetector {
+    var threshold = 0.05
+    var gracePeriod: TimeInterval = 4
+
+    private(set) var startedAt: Date
+    private(set) var hasHeardSound = false
+
+    init(startedAt: Date = Date()) {
+        self.startedAt = startedAt
+    }
+
+    /// Returns true while the "no audio" warning should show.
+    mutating func update(level: Double, at date: Date = Date()) -> Bool {
+        if level > threshold {
+            hasHeardSound = true
+        }
+        return !hasHeardSound && date.timeIntervalSince(startedAt) >= gracePeriod
     }
 }

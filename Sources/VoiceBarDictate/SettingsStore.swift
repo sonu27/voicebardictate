@@ -10,6 +10,7 @@ final class SettingsStore {
         static let startAtLogin = "settings.startAtLogin"
         static let hotkey = "settings.hotkey"
         static let hotkeyMode = "settings.hotkeyMode"
+        static let accessibilityPromptShown = "state.accessibilityPromptShown"
     }
 
     static let defaultAPIBaseURL = "https://api.openai.com"
@@ -46,6 +47,13 @@ final class SettingsStore {
         #else
         return false
         #endif
+    }
+
+    /// Whether the system Accessibility prompt was shown once already. After that the popover's notice card
+    /// explains what's missing, so the prompt doesn't reappear at every launch.
+    var hasShownAccessibilityPrompt: Bool {
+        get { defaults.bool(forKey: DefaultsKey.accessibilityPromptShown) }
+        set { defaults.set(newValue, forKey: DefaultsKey.accessibilityPromptShown) }
     }
 
     var model: TranscriptionModel {
@@ -186,6 +194,10 @@ final class SettingsStore {
     }
 
     private static func findDotEnvFileURL() -> URL? {
+        // Apps launched from Finder or `open` start in `/`, so let a debug launch point at a file directly.
+        if let path = ProcessInfo.processInfo.environment["VOICEBAR_DOTENV_PATH"], !path.isEmpty {
+            return URL(fileURLWithPath: path)
+        }
         var directoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         while true {
             let candidateURL = directoryURL.appendingPathComponent(".env", isDirectory: false)

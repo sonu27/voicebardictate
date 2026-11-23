@@ -29,6 +29,17 @@ struct Hotkey: Codable, Equatable, Sendable {
         return names
     }
 
+    /// Keycap labels in the order macOS menus show them: ⌃ ⌥ ⇧ ⌘, then the key.
+    var keyCapLabels: [String] {
+        var labels: [String] = []
+        if carbonModifiers & UInt32(controlKey) != 0 { labels.append("⌃") }
+        if carbonModifiers & UInt32(optionKey) != 0 { labels.append("⌥") }
+        if carbonModifiers & UInt32(shiftKey) != 0 { labels.append("⇧") }
+        if carbonModifiers & UInt32(cmdKey) != 0 { labels.append("⌘") }
+        labels.append(keyLabel)
+        return labels
+    }
+
     /// The equivalent SwiftUI shortcut, used only to display the shortcut next to the menu item.
     var menuKeyboardShortcut: KeyboardShortcut? {
         let key: KeyEquivalent

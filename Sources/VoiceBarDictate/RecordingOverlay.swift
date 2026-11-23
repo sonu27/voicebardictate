@@ -3,85 +3,114 @@ import Observation
 import SwiftUI
 
 private enum OverlayLayout {
+    static let wideWidth: CGFloat = 340
     static let compactWidth: CGFloat = 220
-    static let expandedWidth: CGFloat = 380
-    static let height: CGFloat = 62
-    static let bottomInset: CGFloat = 18
-    static let cornerRadius: CGFloat = 15
+    /// The panel is a fixed transparent canvas; the card sits at its bottom edge and grows upwards,
+    /// so changing state never needs a window resize and the card's bottom edge never moves.
+    static let canvasSize = NSSize(width: 380, height: 200)
+    /// Room around the card for its shadow.
+    static let shadowMargin: CGFloat = 20
+    static let bottomInset: CGFloat = 18 - shadowMargin
+    static let cornerRadius: CGFloat = 14
+}
+
+/// What the listening card's footer offers.
+struct ListeningHints: Equatable {
+    /// Hold-to-talk started from the shortcut: letting go inserts.
+    var releaseToInsert: Bool
+    /// Return and Escape are captured system-wide (needs Accessibility). When false, the footer shows plain
+    /// buttons instead of key labels, so it never suggests keys that won't work.
+    var capturesKeys: Bool
 }
 
 @MainActor
 final class RecordingOverlayController {
+    /// Called when Insert or Cancel is clicked in the listening card.
+    var onInsert: (() -> Void)?
+    var onCancel: (() -> Void)?
+
     private let model = RecordingOverlayModel()
     private var panel: NSPanel?
-    private var messageDismissTask: Task<Void, Never>?
+    private var dismissTask: Task<Void, Never>?
+    private var mouseMonitors: [Any] = []
 
-    func showRecording(level: Double) {
-        ensurePanel()
-        messageDismissTask?.cancel()
-        model.phase = .recording
-        model.level = level
+    func showListening(startedAt: Date, hints: ListeningHints) {
+        model.level = 0
         model.liveText = ""
-        showPanel()
+        model.silentDeviceName = nil
+        present(.listening(startedAt: startedAt, hints: hints))
     }
 
-    func updateRecordingLevel(_ level: Double) {
-        guard model.phase == .recording else { return }
+    func updateLevel(_ level: Double, silentDeviceName: String?) {
+        guard case .listening = model.phase else { return }
         model.level = level
-    }
-
-    /// Shows partial text from a live transcriber; the panel widens to make room.
-    func updateLiveText(_ text: String) {
-        guard model.phase == .recording else { return }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let wasEmpty = model.liveText.isEmpty
-        model.liveText = trimmed
-        if wasEmpty != trimmed.isEmpty {
-            showPanel()
+        if model.silentDeviceName != silentDeviceName {
+            model.silentDeviceName = silentDeviceName
         }
     }
 
-    func showTranscribing() {
-        ensurePanel()
-        messageDismissTask?.cancel()
-        model.phase = .transcribing
-        model.level = 0
-        showPanel()
+    /// Partial text from a live transcriber.
+    func updateLiveText(_ text: String) {
+        guard case .listening = model.phase else { return }
+        model.liveText = text
+    }
+
+    func showTranscribing(engineName: String) {
+        present(.transcribing(engineName: engineName))
     }
 
     /// A short notice that hides itself, for feedback when the menu is not open.
     func showMessage(_ message: String, duration: Duration = .seconds(3)) {
-        ensurePanel()
-        model.phase = .message(message)
-        showPanel()
+        present(.message(message), autoHideAfter: duration)
+    }
 
-        messageDismissTask?.cancel()
-        messageDismissTask = Task { [weak self] in
-            try? await Task.sleep(for: duration)
-            guard !Task.isCancelled, let self, case .message = model.phase else { return }
-            hide()
-        }
+    func showError(title: String, detail: String) {
+        present(.error(title: title, detail: detail), autoHideAfter: .seconds(5))
     }
 
     func hide() {
-        messageDismissTask?.cancel()
+        dismissTask?.cancel()
+        stopTrackingMouse()
         model.phase = .hidden
         model.liveText = ""
+        model.silentDeviceName = nil
+        panel?.orderOut(nil)
+    }
 
-        guard let panel, panel.isVisible else { return }
-        panel.orderOut(nil)
+    private func present(_ phase: RecordingOverlayModel.Phase, autoHideAfter duration: Duration? = nil) {
+        ensurePanel()
+        dismissTask?.cancel()
+        model.phase = phase
+        showPanel()
+        if case .listening = phase {
+            startTrackingMouse()
+        } else {
+            stopTrackingMouse()
+        }
+
+        guard let duration else { return }
+        dismissTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, let self, model.phase == phase else { return }
+            hide()
+        }
     }
 
     private func ensurePanel() {
         guard panel == nil else { return }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: OverlayLayout.compactWidth, height: OverlayLayout.height),
+            contentRect: NSRect(origin: .zero, size: OverlayLayout.canvasSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
         )
-        panel.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
+        panel.contentView = FirstClickHostingView(rootView: RecordingOverlayView(
+            model: model,
+            onInsert: { [weak self] in self?.onInsert?() },
+            onCancel: { [weak self] in self?.onCancel?() }
+        ))
+        panel.acceptsMouseMovedEvents = true
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -91,28 +120,59 @@ final class RecordingOverlayController {
         panel.isMovable = false
         panel.ignoresMouseEvents = true
         panel.isReleasedWhenClosed = false
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.orderOut(nil)
 
         self.panel = panel
     }
 
     private func showPanel() {
-        guard let panel else { return }
-        panel.setContentSize(NSSize(width: model.preferredWidth, height: OverlayLayout.height))
-        repositionPanel()
-        panel.alphaValue = 1
+        guard let panel, let screen = preferredScreen() else { return }
+        let visibleFrame = screen.visibleFrame
+        let origin = NSPoint(
+            x: visibleFrame.midX - (OverlayLayout.canvasSize.width / 2),
+            y: visibleFrame.minY + OverlayLayout.bottomInset
+        )
+        panel.setFrame(NSRect(origin: origin, size: OverlayLayout.canvasSize), display: false)
         panel.orderFrontRegardless()
     }
 
-    private func repositionPanel() {
-        guard let panel else { return }
-        guard let screen = preferredScreen() else { return }
+    // MARK: Clicks
 
-        let panelSize = panel.frame.size
-        let visibleFrame = screen.visibleFrame
-        let x = visibleFrame.midX - (panelSize.width / 2)
-        let y = visibleFrame.minY + OverlayLayout.bottomInset
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    /// The panel is a large transparent canvas, so it ignores the mouse except while the pointer is over the
+    /// card; otherwise it would block clicks meant for the app underneath. Watching mouse movement needs no
+    /// permission, unlike watching keys.
+    private func startTrackingMouse() {
+        guard mouseMonitors.isEmpty else { return }
+        updateMouseInteractivity()
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateMouseInteractivity() }
+        }) {
+            mouseMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.updateMouseInteractivity() }
+            return event
+        }) {
+            mouseMonitors.append(local)
+        }
+    }
+
+    private func stopTrackingMouse() {
+        mouseMonitors.forEach(NSEvent.removeMonitor)
+        mouseMonitors.removeAll()
+        panel?.ignoresMouseEvents = true
+    }
+
+    private func updateMouseInteractivity() {
+        guard let panel else { return }
+        let mouse = NSEvent.mouseLocation
+        // `cardFrame` is in SwiftUI's top-left-origin coordinates within the panel.
+        let local = NSPoint(x: mouse.x - panel.frame.minX, y: panel.frame.maxY - mouse.y)
+        let isOverCard = model.cardFrame.contains(local)
+        if panel.ignoresMouseEvents == isOverCard {
+            panel.ignoresMouseEvents = !isOverCard
+        }
     }
 
     private func preferredScreen() -> NSScreen? {
@@ -129,112 +189,204 @@ final class RecordingOverlayController {
 final class RecordingOverlayModel {
     enum Phase: Equatable {
         case hidden
-        case recording
-        case transcribing
+        case listening(startedAt: Date, hints: ListeningHints)
+        case transcribing(engineName: String)
         case message(String)
+        case error(title: String, detail: String)
     }
 
     var phase: Phase = .hidden
     var level: Double = 0
     var liveText = ""
+    /// Set when nothing has been heard from this input device since recording began.
+    var silentDeviceName: String?
+    /// Where the card is drawn, so the panel only takes clicks over it.
+    @ObservationIgnored var cardFrame: CGRect = .zero
+}
 
-    var preferredWidth: CGFloat {
-        switch phase {
-        case .recording where !liveText.isEmpty, .message:
-            return OverlayLayout.expandedWidth
-        default:
-            return OverlayLayout.compactWidth
-        }
+/// Lets a click on a button in the non-activating overlay act at once, instead of only focusing the panel.
+private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+private struct CardFrameKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }
 
 struct RecordingOverlayView: View {
     let model: RecordingOverlayModel
+    var onInsert: () -> Void = {}
+    var onCancel: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 9) {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.15))
-                    .frame(width: 24, height: 24)
+        VStack {
+            Spacer(minLength: 0)
+            card
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: CardFrameKey.self, value: proxy.frame(in: .named("canvas")))
+                })
+                .padding(.bottom, OverlayLayout.shadowMargin)
+        }
+        .coordinateSpace(name: "canvas")
+        .onPreferenceChange(CardFrameKey.self) { frame in
+            MainActor.assumeIsolated { model.cardFrame = frame }
+        }
+        .frame(width: OverlayLayout.canvasSize.width, height: OverlayLayout.canvasSize.height)
+        .animation(.snappy(duration: 0.2), value: model.phase)
+        .animation(.snappy(duration: 0.2), value: model.liveText.isEmpty)
+        .animation(.snappy(duration: 0.2), value: model.silentDeviceName)
+        .environment(\.colorScheme, .dark)
+    }
 
-                switch model.phase {
-                case .recording:
-                    Image(systemName: "mic.fill")
-                        .foregroundStyle(.white)
-                        .font(.system(size: 11, weight: .semibold))
-                case .message:
-                    Image(systemName: "info.circle.fill")
-                        .foregroundStyle(.white)
-                        .font(.system(size: 13, weight: .semibold))
-                case .transcribing, .hidden:
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.white)
-                }
+    @ViewBuilder
+    private var card: some View {
+        switch model.phase {
+        case .hidden:
+            EmptyView()
+        case .listening(let startedAt, let hints):
+            listening(startedAt: startedAt, hints: hints)
+                .cardStyle(width: OverlayLayout.wideWidth)
+        case .transcribing(let engineName):
+            HStack(spacing: 8) {
+                Spinner()
+                    .frame(width: 16, height: 16)
+                Text("Transcribing…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 8)
+                Text(engineName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .cardStyle(width: OverlayLayout.compactWidth)
+        case .message(let message):
+            notice(icon: "info.circle", iconColor: Theme.accentBright, title: message, detail: nil)
+                .cardStyle(width: OverlayLayout.wideWidth)
+        case .error(let title, let detail):
+            notice(icon: "exclamationmark.circle", iconColor: Theme.errorAccent, title: title, detail: detail)
+                .cardStyle(width: OverlayLayout.wideWidth)
+        }
+    }
+
+    private func listening(startedAt: Date, hints: ListeningHints) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                PulsingDot()
+                Text("Listening")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                ElapsedTimeText(since: startedAt)
+                Spacer(minLength: 8)
+                LevelBars(level: model.level, isSilent: model.silentDeviceName != nil)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                switch model.phase {
-                case .recording:
-                    Text(model.liveText.isEmpty ? "Listening..." : model.liveText)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    RecordingLevelBars(level: model.level)
-                case .message(let message):
-                    Text(message)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                case .transcribing, .hidden:
-                    Text("Transcribing...")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text("Processing speech")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.76))
+            if !model.liveText.isEmpty {
+                // About two lines at this width; showing the tail keeps the newest words visible.
+                Text(DictationFormat.tail(model.liveText, maxCharacters: 96))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textBody)
+                    .lineSpacing(2)
+                    .lineLimit(2)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 7)
+            }
+
+            if let deviceName = model.silentDeviceName {
+                Label("No audio from \(deviceName). Check your input device.", systemImage: "mic.slash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.warningAccent)
+                    .lineLimit(2)
+                    .padding(.top, 8)
+            } else {
+                Divider()
+                    .overlay(Theme.divider)
+                    .padding(.top, 8)
+                HStack {
+                    if hints.releaseToInsert {
+                        Label("Release to insert", systemImage: "hand.raised")
+                            .padding(.vertical, 3)
+                    } else {
+                        HintButton(key: hints.capturesKeys ? "↩" : nil, title: "Insert", action: onInsert)
+                    }
+                    Spacer()
+                    HintButton(key: hints.capturesKeys ? "esc" : nil, title: "Cancel", action: onCancel)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    private func notice(icon: String, iconColor: Color, title: String, detail: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(iconColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(width: model.preferredWidth, height: OverlayLayout.height)
-        .background(
-            RoundedRectangle(cornerRadius: OverlayLayout.cornerRadius, style: .continuous)
-                .fill(.black.opacity(0.82))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: OverlayLayout.cornerRadius, style: .continuous)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
     }
 }
 
-private struct RecordingLevelBars: View {
-    let level: Double
+private extension View {
+    func cardStyle(width: CGFloat) -> some View {
+        padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(width: width)
+            .background(
+                RoundedRectangle(cornerRadius: OverlayLayout.cornerRadius, style: .continuous)
+                    .fill(Theme.overlayBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: OverlayLayout.cornerRadius, style: .continuous)
+                    .strokeBorder(Theme.border, lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
+    }
+}
 
-    private let multipliers: [Double] = [0.45, 0.72, 1.0, 0.78, 0.52]
+/// A footer action: the key that triggers it (when keys are captured) plus a label, clickable either way.
+private struct HintButton: View {
+    let key: String?
+    let title: String
+    let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 4) {
-            ForEach(Array(multipliers.enumerated()), id: \.offset) { item in
-                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                    .fill(Color.white.opacity(0.95))
-                    .frame(width: 4, height: height(for: item.element))
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let key {
+                    KeyCap(label: key)
+                }
+                Text(title)
+                    .foregroundStyle(isHovered ? Theme.textPrimary : Theme.textTertiary)
             }
+            .padding(.horizontal, key == nil ? 8 : 3)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(key == nil || isHovered ? Theme.keycapBackground : .clear)
+            )
+            .contentShape(Rectangle())
         }
-        .frame(height: 16, alignment: .bottom)
-        .animation(.linear(duration: 0.07), value: level)
-    }
-
-    private func height(for multiplier: Double) -> Double {
-        let minHeight = 3.0
-        let maxHeight = 16.0
-        let scaled = min(max(level, 0), 1) * multiplier
-        return minHeight + ((maxHeight - minHeight) * scaled)
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
