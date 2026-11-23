@@ -1,6 +1,8 @@
 import Foundation
 
 struct OpenAITranscriptionClient {
+    private static let transcriptionsPath = "/v1/audio/transcriptions"
+
     func transcribe(
         fileURL: URL,
         apiKey: String,
@@ -9,28 +11,26 @@ struct OpenAITranscriptionClient {
         prompt: String?,
         language: String?
     ) async throws -> String {
-        let normalizedBaseURL = normalizeBaseURL(baseURL)
-        guard let endpoint = URL(string: normalizedBaseURL + "/v1/audio/transcriptions") else {
+        let normalizedBaseURL = Self.normalizeBaseURL(baseURL)
+        guard let endpoint = URL(string: normalizedBaseURL + Self.transcriptionsPath) else {
             throw TranscriptionError.invalidBaseURL(baseURL)
         }
 
-        let audioData = try Data(contentsOf: fileURL)
+        // Stream the multipart body from disk instead of holding the whole recording in memory.
         let boundary = "Boundary-\(UUID().uuidString)"
-        var request = URLRequest(url: endpoint)
+        let bodyFileURL = try MultipartFormBody(
+            boundary: boundary,
+            fields: Self.formFields(model: model, prompt: prompt, language: language),
+            file: .init(fieldName: "file", fileURL: fileURL, contentType: "audio/m4a")
+        ).writeToTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: bodyFileURL) }
 
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = buildBody(
-            boundary: boundary,
-            model: model,
-            prompt: prompt,
-            language: language,
-            fileName: fileURL.lastPathComponent,
-            audioData: audioData
-        )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: bodyFileURL)
         guard let response = response as? HTTPURLResponse else {
             throw TranscriptionError.invalidResponse
         }
@@ -38,14 +38,14 @@ struct OpenAITranscriptionClient {
         guard (200..<300).contains(response.statusCode) else {
             if let apiError = try? JSONDecoder().decode(OpenAIErrorEnvelope.self, from: data) {
                 if
-                    let suggestedBaseURL = suggestedRegionalBaseURL(from: apiError.error.message),
+                    let suggestedBaseURL = Self.suggestedRegionalBaseURL(from: apiError.error.message),
                     URL(string: suggestedBaseURL)?.host?.lowercased() != URL(string: normalizedBaseURL)?.host?.lowercased(),
-                    let retryEndpoint = URL(string: suggestedBaseURL + "/v1/audio/transcriptions")
+                    let retryEndpoint = URL(string: suggestedBaseURL + Self.transcriptionsPath)
                 {
                     var retryRequest = request
                     retryRequest.url = retryEndpoint
 
-                    let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                    let (retryData, retryResponse) = try await URLSession.shared.upload(for: retryRequest, fromFile: bodyFileURL)
                     guard let retryHTTPResponse = retryResponse as? HTTPURLResponse else {
                         throw TranscriptionError.invalidResponse
                     }
@@ -56,7 +56,7 @@ struct OpenAITranscriptionClient {
                     }
 
                     if let retryAPIError = try? JSONDecoder().decode(OpenAIErrorEnvelope.self, from: retryData) {
-                        let retryMessage = appendRegionalHintIfNeeded(
+                        let retryMessage = Self.appendRegionalHintIfNeeded(
                             retryAPIError.error.message,
                             currentBaseURL: suggestedBaseURL
                         )
@@ -66,7 +66,7 @@ struct OpenAITranscriptionClient {
                     throw TranscriptionError.httpError(retryHTTPResponse.statusCode)
                 }
 
-                let message = appendRegionalHintIfNeeded(apiError.error.message, currentBaseURL: normalizedBaseURL)
+                let message = Self.appendRegionalHintIfNeeded(apiError.error.message, currentBaseURL: normalizedBaseURL)
                 throw TranscriptionError.apiError(message)
             }
             throw TranscriptionError.httpError(response.statusCode)
@@ -76,13 +76,32 @@ struct OpenAITranscriptionClient {
         return result.text
     }
 
-    private func normalizeBaseURL(_ baseURL: String) -> String {
+    static func normalizeBaseURL(_ baseURL: String) -> String {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let raw = trimmed.isEmpty ? "https://api.openai.com" : trimmed
+        let raw = trimmed.isEmpty ? SettingsStore.defaultAPIBaseURL : trimmed
         return raw.hasSuffix("/") ? String(raw.dropLast()) : raw
     }
 
-    private func appendRegionalHintIfNeeded(_ message: String, currentBaseURL: String) -> String {
+    static func formFields(model: String, prompt: String?, language: String?) -> [(name: String, value: String)] {
+        var fields: [(name: String, value: String)] = [
+            ("model", model),
+            ("response_format", "json")
+        ]
+
+        if let prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
+            fields.append(("prompt", prompt))
+        }
+
+        if let language = language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
+            // OpenAI expects an ISO-639-1 code, so "en-GB" is sent as "en".
+            let languageCode = Locale.Language(identifier: language).languageCode?.identifier ?? language
+            fields.append(("language", languageCode))
+        }
+
+        return fields
+    }
+
+    static func appendRegionalHintIfNeeded(_ message: String, currentBaseURL: String) -> String {
         guard let suggestedBaseURL = suggestedRegionalBaseURL(from: message) else {
             return message
         }
@@ -96,7 +115,7 @@ struct OpenAITranscriptionClient {
         return "\(message). Set API Base URL to \(suggestedBaseURL)."
     }
 
-    private func suggestedRegionalBaseURL(from message: String) -> String? {
+    static func suggestedRegionalBaseURL(from message: String) -> String? {
         let marker = "project geography "
         guard let range = message.range(of: marker, options: .caseInsensitive) else {
             return nil
@@ -124,43 +143,56 @@ struct OpenAITranscriptionClient {
 
         return "https://\(host)"
     }
+}
 
-    private func buildBody(
-        boundary: String,
-        model: String,
-        prompt: String?,
-        language: String?,
-        fileName: String,
-        audioData: Data
-    ) -> Data {
-        var body = Data()
+/// Writes a `multipart/form-data` body to a temporary file, copying the attached file in chunks.
+struct MultipartFormBody {
+    struct FilePart {
+        var fieldName: String
+        var fileURL: URL
+        var contentType: String
+    }
 
-        func appendField(_ name: String, _ value: String) {
-            body.appendString("--\(boundary)\r\n")
-            body.appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
-            body.appendString("\(value)\r\n")
+    var boundary: String
+    var fields: [(name: String, value: String)]
+    var file: FilePart
+
+    func writeToTemporaryFile() throws -> URL {
+        let bodyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoiceBarDictate-upload-\(UUID().uuidString)")
+            .appendingPathExtension("multipart")
+        guard FileManager.default.createFile(atPath: bodyURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
         }
 
-        appendField("model", model)
-        appendField("response_format", "json")
+        do {
+            let output = try FileHandle(forWritingTo: bodyURL)
+            defer { try? output.close() }
 
-        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            appendField("prompt", prompt)
+            var header = ""
+            for field in fields {
+                header += "--\(boundary)\r\n"
+                header += "Content-Disposition: form-data; name=\"\(field.name)\"\r\n\r\n"
+                header += "\(field.value)\r\n"
+            }
+            header += "--\(boundary)\r\n"
+            header += "Content-Disposition: form-data; name=\"\(file.fieldName)\"; filename=\"\(file.fileURL.lastPathComponent)\"\r\n"
+            header += "Content-Type: \(file.contentType)\r\n\r\n"
+            try output.write(contentsOf: Data(header.utf8))
+
+            let input = try FileHandle(forReadingFrom: file.fileURL)
+            defer { try? input.close() }
+            while let chunk = try input.read(upToCount: 256 * 1024), !chunk.isEmpty {
+                try output.write(contentsOf: chunk)
+            }
+
+            try output.write(contentsOf: Data("\r\n--\(boundary)--\r\n".utf8))
+        } catch {
+            try? FileManager.default.removeItem(at: bodyURL)
+            throw error
         }
 
-        if let language = language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
-            let languageCode = Locale.Language(identifier: language).languageCode?.identifier ?? language
-            appendField("language", languageCode)
-        }
-
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n")
-        body.appendString("Content-Type: audio/m4a\r\n\r\n")
-        body.append(audioData)
-        body.appendString("\r\n")
-        body.appendString("--\(boundary)--\r\n")
-
-        return body
+        return bodyURL
     }
 }
 
@@ -192,14 +224,6 @@ enum TranscriptionError: LocalizedError {
             return "OpenAI API request failed with status code \(statusCode)."
         case .apiError(let message):
             return "OpenAI API error: \(message)"
-        }
-    }
-}
-
-private extension Data {
-    mutating func appendString(_ string: String) {
-        if let data = string.data(using: .utf8) {
-            append(data)
         }
     }
 }

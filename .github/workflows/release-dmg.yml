@@ -18,6 +18,10 @@ permissions:
 jobs:
   release-dmg:
     runs-on: macos-latest
+    env:
+      # Developer ID signing + notarization run only when these secrets are configured;
+      # otherwise the release falls back to an ad-hoc signed build.
+      HAS_DEVELOPER_ID: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 != '' && secrets.NOTARY_KEY_P8 != '' }}
 
     steps:
       - name: Checkout
@@ -27,11 +31,13 @@ jobs:
           fetch-tags: true
 
       - name: Resolve release tag
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             release_tag="${GITHUB_REF_NAME}"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            release_tag="${{ inputs.tag_name }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            release_tag="${INPUT_TAG_NAME}"
           else
             echo "Unable to determine release tag." >&2
             exit 1
@@ -52,11 +58,67 @@ jobs:
             exit 1
           fi
 
-      - name: Build app bundle (ad-hoc signed)
-        run: BUILD_CONFIGURATION=release SIGNING_MODE=adhoc ./scripts/build-app-bundle.sh
+      - name: Run tests
+        run: swift test
+
+      - name: Import Developer ID certificate
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain_path="${RUNNER_TEMP}/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          certificate_path="${RUNNER_TEMP}/developer-id.p12"
+
+          echo "${CERTIFICATE_P12}" | base64 --decode > "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" -P "${CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "${keychain_path}"
+          security set-key-partition-list -S apple-tool:,apple: -k "${keychain_password}" "${keychain_path}" >/dev/null
+          security list-keychains -d user -s "${keychain_path}" $(security list-keychains -d user | tr -d '"')
+          rm -f "${certificate_path}"
+
+          identity="$(security find-identity -v -p codesigning "${keychain_path}" | grep -m1 -o '"Developer ID Application:[^"]*"' | tr -d '"')"
+          if [[ -z "${identity}" ]]; then
+            echo "No Developer ID Application identity found in the imported certificate." >&2
+            exit 1
+          fi
+          echo "CODE_SIGN_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+
+      - name: Build app bundle
+        run: |
+          export APP_VERSION="${RELEASE_TAG#v}"
+          export BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          if [[ "${HAS_DEVELOPER_ID}" == "true" ]]; then
+            BUILD_CONFIGURATION=release SIGNING_MODE=developer-id ./scripts/build-app-bundle.sh
+          else
+            echo "::warning::Developer ID secrets are not configured; building an ad-hoc signed app. Users will need to re-grant permissions after each update."
+            BUILD_CONFIGURATION=release SIGNING_MODE=adhoc ./scripts/build-app-bundle.sh
+          fi
 
       - name: Build DMG
         run: DMG_NAME="VoiceBarDictate-${RELEASE_TAG}.dmg" ./scripts/build-dmg.sh
+
+      - name: Sign and notarize DMG
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          dmg_path="dist/VoiceBarDictate-${RELEASE_TAG}.dmg"
+          codesign --force --timestamp --sign "${CODE_SIGN_IDENTITY}" "${dmg_path}"
+
+          export NOTARY_KEY_PATH="${RUNNER_TEMP}/notary-key.p8"
+          echo "${NOTARY_KEY_P8}" > "${NOTARY_KEY_PATH}"
+          ./scripts/notarize.sh "${dmg_path}"
+          rm -f "${NOTARY_KEY_PATH}"
+
+      - name: Remove signing keychain
+        if: always() && env.HAS_DEVELOPER_ID == 'true'
+        run: security delete-keychain "${RUNNER_TEMP}/signing.keychain-db" || true
 
       - name: Generate checksum
         run: shasum -a 256 "dist/VoiceBarDictate-${RELEASE_TAG}.dmg" > "dist/VoiceBarDictate-${RELEASE_TAG}.sha256"

@@ -4,21 +4,21 @@ import SwiftUI
 @main
 struct VoiceBarDictateApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var appState = AppState()
+    @State private var appState = AppState()
 
     var body: some Scene {
         MenuBarExtra("VoiceBar", systemImage: appState.menuBarSymbolName) {
             MenuBarView()
-                .environmentObject(appState)
+                .environment(appState)
         }
         .menuBarExtraStyle(.menu)
 
-        WindowGroup("Settings", id: "settings") {
+        // `Window` is single-instance, unlike `WindowGroup`, so Settings cannot be opened twice.
+        Window("VoiceBar Settings", id: "settings") {
             SettingsView()
-                .environmentObject(appState)
-                .frame(width: 520)
-                .padding()
+                .environment(appState)
         }
+        .windowResizability(.contentSize)
     }
 }
 

@@ -2,7 +2,16 @@ import Foundation
 import Security
 
 struct KeychainService {
-    private let service = "com.codex.voicebardictate"
+    /// Matches the app bundle identifier.
+    static let defaultService = "dev.arai.VoiceBarDictate"
+    /// Placeholder service name used by earlier builds; items are migrated from it on first read.
+    static let legacyService = "com.codex.voicebardictate"
+
+    private let service: String
+
+    init(service: String = KeychainService.defaultService) {
+        self.service = service
+    }
 
     func save(_ value: String, account: String) throws {
         let data = Data(value.utf8)

@@ -16,7 +16,7 @@ fi
 SCHEME="${SCHEME:-VoiceBarDictate}"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$PWD/.build/XcodeDerivedData}"
-PRODUCT_BUNDLE_IDENTIFIER="${PRODUCT_BUNDLE_IDENTIFIER:-com.example.VoiceBarDictate}"
+PRODUCT_BUNDLE_IDENTIFIER="${PRODUCT_BUNDLE_IDENTIFIER:-dev.arai.VoiceBarDictate}"
 SIGNING_MODE="${SIGNING_MODE:-auto}" # auto|adhoc|selfcert|apple
 
 if [[ "${SIGNING_MODE}" == "auto" ]]; then

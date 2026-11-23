@@ -2,22 +2,26 @@ import AppKit
 import SwiftUI
 
 struct MenuBarView: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text(appState.statusMessage)
 
-        if let errorMessage = appState.errorMessage {
+        if let errorMessage = appState.errorMessage, errorMessage != appState.statusMessage {
             Text("Error: \(errorMessage)")
                 .foregroundStyle(.red)
+        }
+
+        if let progress = appState.appleModelDownloadProgress {
+            Text("Downloading Apple speech model: \(Int((progress * 100).rounded()))%")
         }
 
         Button(appState.isRecording ? "Stop & Transcribe" : "Start Dictation") {
             appState.toggleFromMenu()
         }
-        .keyboardShortcut(.space, modifiers: [.control, .option])
-        .disabled(appState.isTranscribing)
+        .keyboardShortcut(appState.hotkey.menuKeyboardShortcut)
+        .disabled(appState.phase == .starting || appState.isTranscribing)
 
         if !appState.lastTranscript.isEmpty {
             Divider()
@@ -31,16 +35,18 @@ struct MenuBarView: View {
 
         Divider()
 
-        Text("Shortcut: \(appState.hotkeyHint)")
+        Text("Shortcut: \(appState.hotkeyHint)\(appState.hotkeyMode == .hold ? " (hold)" : "")")
 
         Button("Settings...") {
-            NSApplication.shared.activate(ignoringOtherApps: true)
+            NSApp.activate()
             openWindow(id: "settings")
         }
+        .keyboardShortcut(",")
 
         Button("Quit") {
             NSApp.terminate(nil)
         }
+        .keyboardShortcut("q")
     }
 
     private func transcriptPreview(_ value: String) -> String {

@@ -6,9 +6,12 @@ APP_NAME="VoiceBarDictate"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-release}" # debug|release
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 APP_DIR="${APP_DIR:-${DIST_DIR}/${APP_NAME}.app}"
-PRODUCT_BUNDLE_IDENTIFIER="${PRODUCT_BUNDLE_IDENTIFIER:-com.example.VoiceBarDictate}"
+PRODUCT_BUNDLE_IDENTIFIER="${PRODUCT_BUNDLE_IDENTIFIER:-dev.arai.VoiceBarDictate}"
+APP_VERSION="${APP_VERSION:-1.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 MIC_USAGE_DESCRIPTION="${MIC_USAGE_DESCRIPTION:-VoiceBarDictate uses your microphone only while dictation is active.}"
-SIGNING_MODE="${SIGNING_MODE:-adhoc}" # adhoc|selfcert
+SPEECH_USAGE_DESCRIPTION="${SPEECH_USAGE_DESCRIPTION:-VoiceBarDictate transcribes your dictation on this Mac when Apple On-Device is selected.}"
+SIGNING_MODE="${SIGNING_MODE:-adhoc}" # adhoc|selfcert|developer-id
 OPEN_APP="${OPEN_APP:-0}" # 1 to open after build
 
 cd "${ROOT_DIR}"
@@ -49,13 +52,17 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
+  <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>${BUILD_NUMBER}</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>${MIC_USAGE_DESCRIPTION}</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>${SPEECH_USAGE_DESCRIPTION}</string>
 </dict>
 </plist>
 EOF
@@ -80,8 +87,35 @@ EOF
     echo "Signing app bundle with local certificate: ${CODE_SIGN_IDENTITY}"
     codesign --force --deep --timestamp=none --sign "${CODE_SIGN_IDENTITY}" "${APP_DIR}"
     ;;
+  developer-id)
+    if [[ -z "${CODE_SIGN_IDENTITY:-}" ]]; then
+      cat >&2 <<'EOF'
+SIGNING_MODE=developer-id requires CODE_SIGN_IDENTITY.
+Example:
+  SIGNING_MODE=developer-id CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build-app-bundle.sh
+EOF
+      exit 1
+    fi
+    # Notarization requires the hardened runtime; the audio-input entitlement keeps microphone access under it.
+    entitlements_path="$(mktemp -d)/VoiceBarDictate.entitlements"
+    cat > "${entitlements_path}" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>
+EOF
+    echo "Signing app bundle with Developer ID: ${CODE_SIGN_IDENTITY}"
+    codesign --force --timestamp --options runtime \
+      --entitlements "${entitlements_path}" \
+      --sign "${CODE_SIGN_IDENTITY}" "${APP_DIR}"
+    rm -f "${entitlements_path}"
+    ;;
   *)
-    echo "Invalid SIGNING_MODE='${SIGNING_MODE}'. Use adhoc or selfcert." >&2
+    echo "Invalid SIGNING_MODE='${SIGNING_MODE}'. Use adhoc, selfcert, or developer-id." >&2
     exit 1
     ;;
 esac

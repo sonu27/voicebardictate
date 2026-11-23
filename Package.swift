@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VoiceBarDictate",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .executable(
@@ -21,8 +21,13 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
                 .linkedFramework("ApplicationServices"),
-                .linkedFramework("ServiceManagement")
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("Speech")
             ]
+        ),
+        .testTarget(
+            name: "VoiceBarDictateTests",
+            dependencies: ["VoiceBarDictate"]
         )
     ]
 )

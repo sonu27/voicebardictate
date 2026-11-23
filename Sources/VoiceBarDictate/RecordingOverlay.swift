@@ -1,8 +1,10 @@
 import AppKit
+import Observation
 import SwiftUI
 
 private enum OverlayLayout {
-    static let width: CGFloat = 220
+    static let compactWidth: CGFloat = 220
+    static let expandedWidth: CGFloat = 380
     static let height: CGFloat = 62
     static let bottomInset: CGFloat = 18
     static let cornerRadius: CGFloat = 15
@@ -12,11 +14,14 @@ private enum OverlayLayout {
 final class RecordingOverlayController {
     private let model = RecordingOverlayModel()
     private var panel: NSPanel?
+    private var messageDismissTask: Task<Void, Never>?
 
     func showRecording(level: Double) {
         ensurePanel()
+        messageDismissTask?.cancel()
         model.phase = .recording
         model.level = level
+        model.liveText = ""
         showPanel()
     }
 
@@ -25,15 +30,43 @@ final class RecordingOverlayController {
         model.level = level
     }
 
+    /// Shows partial text from a live transcriber; the panel widens to make room.
+    func updateLiveText(_ text: String) {
+        guard model.phase == .recording else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wasEmpty = model.liveText.isEmpty
+        model.liveText = trimmed
+        if wasEmpty != trimmed.isEmpty {
+            showPanel()
+        }
+    }
+
     func showTranscribing() {
         ensurePanel()
+        messageDismissTask?.cancel()
         model.phase = .transcribing
         model.level = 0
         showPanel()
     }
 
+    /// A short notice that hides itself, for feedback when the menu is not open.
+    func showMessage(_ message: String, duration: Duration = .seconds(3)) {
+        ensurePanel()
+        model.phase = .message(message)
+        showPanel()
+
+        messageDismissTask?.cancel()
+        messageDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, let self, case .message = model.phase else { return }
+            hide()
+        }
+    }
+
     func hide() {
+        messageDismissTask?.cancel()
         model.phase = .hidden
+        model.liveText = ""
 
         guard let panel, panel.isVisible else { return }
         panel.orderOut(nil)
@@ -43,7 +76,7 @@ final class RecordingOverlayController {
         guard panel == nil else { return }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: OverlayLayout.width, height: OverlayLayout.height),
+            contentRect: NSRect(x: 0, y: 0, width: OverlayLayout.compactWidth, height: OverlayLayout.height),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
@@ -65,13 +98,8 @@ final class RecordingOverlayController {
 
     private func showPanel() {
         guard let panel else { return }
+        panel.setContentSize(NSSize(width: model.preferredWidth, height: OverlayLayout.height))
         repositionPanel()
-
-        if panel.isVisible {
-            panel.orderFrontRegardless()
-            return
-        }
-
         panel.alphaValue = 1
         panel.orderFrontRegardless()
     }
@@ -96,20 +124,32 @@ final class RecordingOverlayController {
     }
 }
 
+@Observable
 @MainActor
-final class RecordingOverlayModel: ObservableObject {
+final class RecordingOverlayModel {
     enum Phase: Equatable {
         case hidden
         case recording
         case transcribing
+        case message(String)
     }
 
-    @Published var phase: Phase = .hidden
-    @Published var level: Double = 0
+    var phase: Phase = .hidden
+    var level: Double = 0
+    var liveText = ""
+
+    var preferredWidth: CGFloat {
+        switch phase {
+        case .recording where !liveText.isEmpty, .message:
+            return OverlayLayout.expandedWidth
+        default:
+            return OverlayLayout.compactWidth
+        }
+    }
 }
 
 struct RecordingOverlayView: View {
-    @ObservedObject var model: RecordingOverlayModel
+    let model: RecordingOverlayModel
 
     var body: some View {
         HStack(spacing: 9) {
@@ -118,11 +158,16 @@ struct RecordingOverlayView: View {
                     .fill(Color.black.opacity(0.15))
                     .frame(width: 24, height: 24)
 
-                if model.phase == .recording {
+                switch model.phase {
+                case .recording:
                     Image(systemName: "mic.fill")
                         .foregroundStyle(.white)
                         .font(.system(size: 11, weight: .semibold))
-                } else {
+                case .message:
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(.white)
+                        .font(.system(size: 13, weight: .semibold))
+                case .transcribing, .hidden:
                     ProgressView()
                         .controlSize(.small)
                         .tint(.white)
@@ -130,22 +175,33 @@ struct RecordingOverlayView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(model.phase == .recording ? "Listening..." : "Transcribing...")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-
-                if model.phase == .recording {
+                switch model.phase {
+                case .recording:
+                    Text(model.liveText.isEmpty ? "Listening..." : model.liveText)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                     RecordingLevelBars(level: model.level)
-                } else {
+                case .message(let message):
+                    Text(message)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                case .transcribing, .hidden:
+                    Text("Transcribing...")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
                     Text("Processing speech")
                         .font(.system(size: 10))
                         .foregroundStyle(.white.opacity(0.76))
                 }
             }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: OverlayLayout.width, height: OverlayLayout.height)
+        .frame(width: model.preferredWidth, height: OverlayLayout.height)
         .background(
             RoundedRectangle(cornerRadius: OverlayLayout.cornerRadius, style: .continuous)
                 .fill(.black.opacity(0.82))

@@ -33,6 +33,25 @@ final class EscapeKeyMonitor {
         isCaptureActive = isActive
     }
 
+    /// Tries to create the event tap again, e.g. after Accessibility was granted while the app was running.
+    /// On success the fallback monitors are removed. Returns whether keys can now be captured exclusively.
+    @discardableResult
+    func enableExclusiveCaptureIfPossible() -> Bool {
+        guard !hasExclusiveCapture else { return true }
+        guard setupEventTap() else { return false }
+
+        hasExclusiveCapture = true
+        if let fallbackGlobalMonitor {
+            NSEvent.removeMonitor(fallbackGlobalMonitor)
+            self.fallbackGlobalMonitor = nil
+        }
+        if let fallbackLocalMonitor {
+            NSEvent.removeMonitor(fallbackLocalMonitor)
+            self.fallbackLocalMonitor = nil
+        }
+        return true
+    }
+
     deinit {
         teardownEventTap()
 

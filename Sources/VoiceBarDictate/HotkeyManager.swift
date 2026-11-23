@@ -1,8 +1,11 @@
 import Carbon
 import Foundation
 
+/// Registers one global shortcut through Carbon and reports key-down and key-up (for hold-to-talk).
+/// Carbon delivers these events on the main thread.
 final class HotkeyManager {
     var onHotKeyPressed: (() -> Void)?
+    var onHotKeyReleased: (() -> Void)?
 
     private let hotKeyID = EventHotKeyID(signature: fourCharCode(from: "VBDT"), id: 1)
     private var hotKeyRef: EventHotKeyRef?
@@ -19,17 +22,12 @@ final class HotkeyManager {
         }
     }
 
-    func registerDefaultShortcut() throws {
-        let modifiers = UInt32(controlKey) | UInt32(optionKey)
-        try register(keyCode: UInt32(kVK_Space), modifiers: modifiers)
-    }
-
-    func register(keyCode: UInt32, modifiers: UInt32) throws {
+    func register(_ hotkey: Hotkey) throws {
         unregister()
 
         let status = RegisterEventHotKey(
-            keyCode,
-            modifiers,
+            hotkey.keyCode,
+            hotkey.carbonModifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
@@ -37,7 +35,8 @@ final class HotkeyManager {
         )
 
         guard status == noErr else {
-            throw HotkeyError.registerFailed(status)
+            hotKeyRef = nil
+            throw HotkeyError.registerFailed(hotkey.displayString, status)
         }
     }
 
@@ -49,10 +48,10 @@ final class HotkeyManager {
     }
 
     private func installEventHandler() {
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
 
         let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         let status = InstallEventHandler(
@@ -78,15 +77,22 @@ final class HotkeyManager {
                     return result
                 }
 
-                if incomingID.id == manager.hotKeyID.id, incomingID.signature == manager.hotKeyID.signature {
-                    manager.onHotKeyPressed?()
-                    return noErr
+                guard incomingID.id == manager.hotKeyID.id, incomingID.signature == manager.hotKeyID.signature else {
+                    return OSStatus(eventNotHandledErr)
                 }
 
-                return OSStatus(eventNotHandledErr)
+                switch GetEventKind(eventRef) {
+                case UInt32(kEventHotKeyPressed):
+                    manager.onHotKeyPressed?()
+                case UInt32(kEventHotKeyReleased):
+                    manager.onHotKeyReleased?()
+                default:
+                    return OSStatus(eventNotHandledErr)
+                }
+                return noErr
             },
-            1,
-            &eventType,
+            eventTypes.count,
+            &eventTypes,
             userData,
             &eventHandlerRef
         )
@@ -98,12 +104,12 @@ final class HotkeyManager {
 }
 
 enum HotkeyError: LocalizedError {
-    case registerFailed(OSStatus)
+    case registerFailed(String, OSStatus)
 
     var errorDescription: String? {
         switch self {
-        case .registerFailed(let status):
-            return "RegisterEventHotKey failed with OSStatus \(status)."
+        case .registerFailed(let shortcut, let status):
+            return "\(shortcut) could not be registered (OSStatus \(status)). Another app may already use it."
         }
     }
 }
