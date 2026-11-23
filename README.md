@@ -1,19 +1,23 @@
 # VoiceBarDictate (Native macOS Menu Bar Dictation)
 
-Native SwiftUI/AppKit menu bar app for push-to-talk dictation using OpenAI speech-to-text.
+Native SwiftUI/AppKit menu bar app for dictation using OpenAI or on-device Apple speech-to-text.
 
 ## Features
 
 - Menu bar app (`MenuBarExtra`)
 - Global hotkey: `Control + Option + Space`
 - Press once to start recording, press again to stop and transcribe
-- Uses OpenAI Audio Transcriptions API (`/v1/audio/transcriptions`)
+- **GPT-Transcribe** (default) uploads the completed recording to OpenAI.
+- **Apple On-Device** transcribes locally without an API key on supported Macs running macOS 26 or later. The first use may download a language model.
 - Pastes transcript into the active app using synthetic `Cmd+V`
 - API key stored in macOS Keychain
 - Low idle CPU usage (no always-on audio processing)
 - Optional start-at-login toggle (when running from the signed `.app` bundle)
 
 ## Run
+
+Building from source requires Xcode 26 or later with the macOS 26 SDK or later for Apple’s SpeechAnalyzer APIs.
+The app runs on macOS 13 or later. Apple On-Device requires macOS 26 or later and a supported Mac.
 
 ```bash
 cd VoiceBarDictate
@@ -90,8 +94,8 @@ swift run
 
 1. Launch the app (from `swift run` or Xcode).
 2. Open Settings from the menu bar menu.
-3. Paste your OpenAI API key.
-4. If your OpenAI project has regional residency, set the API Base URL:
+3. Select a model. For GPT-Transcribe, paste your OpenAI API key.
+4. If you use OpenAI with a regional project, set the API Base URL:
    - EU: `https://eu.api.openai.com`
    - US: `https://us.api.openai.com`
 5. Grant microphone permission when prompted.

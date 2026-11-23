@@ -148,8 +148,9 @@ struct OpenAITranscriptionClient {
             appendField("prompt", prompt)
         }
 
-        if let language, !language.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            appendField("language", language)
+        if let language = language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
+            let languageCode = Locale.Language(identifier: language).languageCode?.identifier ?? language
+            appendField("language", languageCode)
         }
 
         body.appendString("--\(boundary)\r\n")

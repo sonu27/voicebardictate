@@ -21,7 +21,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var model: String {
+    @Published private(set) var model: TranscriptionModel {
         didSet {
             settingsStore.model = model
         }
@@ -45,12 +45,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    let availableModels = [
-        "gpt-4o-mini-transcribe",
-        "gpt-4o-transcribe",
-        "whisper-1"
-    ]
-
     let hotkeyHint = "Control + Option + Space"
 
     var isUsingDotEnvAPIKey: Bool {
@@ -59,6 +53,10 @@ final class AppState: ObservableObject {
 
     var canConfigureLaunchAtLogin: Bool {
         launchAtLoginService.isSupportedEnvironment
+    }
+
+    var canChangeModel: Bool {
+        !isStartingRecording && !isRecording && !isTranscribing
     }
 
     private let settingsStore: SettingsStore
@@ -71,10 +69,17 @@ final class AppState: ObservableObject {
     private let recordingOverlay = RecordingOverlayController()
     private var recordingLevelTask: Task<Void, Never>?
     private var transcriptionTask: Task<String, Error>?
+    private var activeRecording: Recording?
+    @Published private var isStartingRecording = false
     private var accessibilityPermissionTask: Task<Void, Never>?
     private var accessibilityStartupTask: Task<Void, Never>?
     private var startupAccessibilityCheckDidRun = false
     private var shouldRelaunchAfterAccessibilityGrant = false
+
+    private enum Recording {
+        case file
+        case apple(Locale)
+    }
 
     init(settingsStore: SettingsStore = SettingsStore()) {
         self.settingsStore = settingsStore
@@ -135,6 +140,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    func setModel(_ newModel: TranscriptionModel) {
+        guard canChangeModel, newModel != model else { return }
+        model = newModel
+    }
+
     func promptAccessibilityPermission() {
         if textInjector.hasAccessibilityPermission(promptIfNeeded: true) {
             statusMessage = "Accessibility permission is enabled."
@@ -177,7 +187,7 @@ final class AppState: ObservableObject {
     }
 
     private func handleToggleRequest() async {
-        if isTranscribing {
+        if isTranscribing || isStartingRecording {
             return
         }
 
@@ -190,8 +200,13 @@ final class AppState: ObservableObject {
 
     private func startRecording() async {
         clearError()
+        isStartingRecording = true
+        defer { isStartingRecording = false }
 
-        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let selectedModel = model
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let language = language.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard selectedModel == .appleOnDevice || !key.isEmpty else {
             setError("Add your OpenAI API key in Settings before recording.")
             return
         }
@@ -203,7 +218,16 @@ final class AppState: ObservableObject {
         }
 
         do {
-            _ = try recorderService.startRecording()
+            switch selectedModel {
+            case .gptTranscribe:
+                _ = try recorderService.startRecording()
+                activeRecording = .file
+            case .appleOnDevice:
+                guard #available(macOS 26.0, *) else { throw AppleTranscriptionError.unavailable }
+                let locale = try await AppleTranscriptionService.locale(for: language)
+                _ = try recorderService.startRecording()
+                activeRecording = .apple(locale)
+            }
             isRecording = true
             escapeKeyMonitor.setCaptureActive(true)
             statusMessage = "Recording..."
@@ -215,37 +239,53 @@ final class AppState: ObservableObject {
     }
 
     private func stopAndTranscribe() async {
+        guard let recording = activeRecording else { return }
+        activeRecording = nil
+        var audioFileURL: URL?
+        defer {
+            transcriptionTask = nil
+            isTranscribing = false
+            escapeKeyMonitor.setCaptureActive(false)
+            recordingOverlay.hide()
+            if let audioFileURL {
+                try? FileManager.default.removeItem(at: audioFileURL)
+            }
+        }
         do {
-            let audioFileURL = try recorderService.stopRecording()
             isRecording = false
             stopRecordingLevelUpdates()
             isTranscribing = true
             recordingOverlay.showTranscribing()
             statusMessage = "Transcribing..."
 
-            defer {
-                transcriptionTask = nil
-                isTranscribing = false
-                escapeKeyMonitor.setCaptureActive(false)
-                recordingOverlay.hide()
-                try? FileManager.default.removeItem(at: audioFileURL)
-            }
-
-            transcriptionTask = Task {
-                try await transcriptionClient.transcribe(
-                    fileURL: audioFileURL,
-                    apiKey: apiKey,
-                    baseURL: apiBaseURL,
-                    model: model,
-                    prompt: prompt,
-                    language: language
-                )
+            switch recording {
+            case .file:
+                let fileURL = try recorderService.stopRecording()
+                audioFileURL = fileURL
+                transcriptionTask = Task {
+                    try await transcriptionClient.transcribe(
+                        fileURL: fileURL,
+                        apiKey: apiKey,
+                        baseURL: apiBaseURL,
+                        model: TranscriptionModel.gptTranscribe.rawValue,
+                        prompt: prompt,
+                        language: language
+                    )
+                }
+            case .apple(let locale):
+                let fileURL = try recorderService.stopRecording()
+                audioFileURL = fileURL
+                guard #available(macOS 26.0, *) else { throw AppleTranscriptionError.unavailable }
+                transcriptionTask = Task {
+                    try await AppleTranscriptionService().transcribe(fileURL: fileURL, locale: locale)
+                }
             }
 
             guard let transcriptionTask else {
                 throw CancellationError()
             }
             let transcript = try await transcriptionTask.value
+            guard !transcriptionTask.isCancelled else { throw CancellationError() }
 
             let normalizedText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedText.isEmpty else {
@@ -262,19 +302,13 @@ final class AppState: ObservableObject {
             } catch {
                 setError("Transcribed but failed to paste automatically: \(error.localizedDescription)")
             }
-        } catch is CancellationError {
-            isRecording = false
-            stopRecordingLevelUpdates()
-            escapeKeyMonitor.setCaptureActive(false)
-            recordingOverlay.hide()
-            clearError()
-            statusMessage = "Dictation canceled."
         } catch {
-            isRecording = false
-            stopRecordingLevelUpdates()
-            escapeKeyMonitor.setCaptureActive(false)
-            recordingOverlay.hide()
-            setError("Could not stop and transcribe: \(error.localizedDescription)")
+            if error is CancellationError || transcriptionTask?.isCancelled == true {
+                clearError()
+                statusMessage = "Dictation canceled."
+            } else {
+                setError("Could not stop and transcribe: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -329,6 +363,7 @@ final class AppState: ObservableObject {
             try? FileManager.default.removeItem(at: audioURL)
         }
 
+        activeRecording = nil
         isRecording = false
         stopRecordingLevelUpdates()
         escapeKeyMonitor.setCaptureActive(false)

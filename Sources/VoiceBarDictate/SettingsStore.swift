@@ -21,12 +21,19 @@ final class SettingsStore {
         self.dotEnvAPIKey = dotEnvFileURL.flatMap { Self.loadAPIKeyFromDotEnv(at: $0) }
     }
 
-    var model: String {
+    var model: TranscriptionModel {
         get {
-            defaults.string(forKey: DefaultsKey.model) ?? "gpt-4o-mini-transcribe"
+            guard let saved = defaults.string(forKey: DefaultsKey.model) else {
+                return .gptTranscribe
+            }
+            if let model = TranscriptionModel(rawValue: saved) {
+                return model
+            }
+            defaults.set(TranscriptionModel.gptTranscribe.rawValue, forKey: DefaultsKey.model)
+            return .gptTranscribe
         }
         set {
-            defaults.set(newValue, forKey: DefaultsKey.model)
+            defaults.set(newValue.rawValue, forKey: DefaultsKey.model)
         }
     }
 

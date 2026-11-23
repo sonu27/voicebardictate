@@ -6,7 +6,7 @@ struct SettingsView: View {
 
     @State private var revealAPIKey = false
     @State private var draftAPIKey = ""
-    @State private var draftModel = "gpt-4o-mini-transcribe"
+    @State private var draftModel: TranscriptionModel = .gptTranscribe
     @State private var draftAPIBaseURL = "https://api.openai.com"
     @State private var draftLanguage = ""
     @State private var draftPrompt = ""
@@ -17,6 +17,31 @@ struct SettingsView: View {
             Text("VoiceBar Settings")
                 .font(.title3)
                 .bold()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Model")
+                    .font(.headline)
+
+                Picker("Model", selection: $draftModel) {
+                    ForEach(TranscriptionModel.allCases, id: \.self) { model in
+                        Text(model.displayName).tag(model)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(!appState.canChangeModel)
+
+                if !appState.canChangeModel {
+                    Text("You can change the model after dictation finishes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if draftModel == .appleOnDevice {
+                    Text("Requires macOS 26 and a supported Mac. The first use may download a language model.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("OpenAI API Key")
@@ -41,18 +66,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Model")
-                    .font(.headline)
-
-                Picker("Model", selection: $draftModel) {
-                    ForEach(appState.availableModels, id: \.self) { model in
-                        Text(model).tag(model)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
+            .disabled(draftModel == .appleOnDevice)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("API Base URL")
@@ -65,12 +79,13 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .disabled(draftModel == .appleOnDevice)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Language (optional, e.g. en)")
+                Text(draftModel == .appleOnDevice ? "Language (optional, e.g. en-GB)" : "Language (optional, e.g. en)")
                     .font(.headline)
 
-                TextField("en", text: $draftLanguage)
+                TextField(draftModel == .appleOnDevice ? "System language" : "en", text: $draftLanguage)
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -82,6 +97,7 @@ struct SettingsView: View {
                     .lineLimit(2, reservesSpace: true)
                     .textFieldStyle(.roundedBorder)
             }
+            .disabled(draftModel == .appleOnDevice)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Global Shortcut")
@@ -124,6 +140,7 @@ struct SettingsView: View {
                     saveAndClose()
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(!appState.canChangeModel && draftModel != appState.model)
             }
         }
         .onAppear(perform: loadDraftFromAppState)
@@ -139,8 +156,12 @@ struct SettingsView: View {
     }
 
     private func saveAndClose() {
-        appState.apiKey = draftAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        appState.model = draftModel
+        guard appState.canChangeModel || draftModel == appState.model else { return }
+        let apiKey = draftAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if appState.apiKey != apiKey {
+            appState.apiKey = apiKey
+        }
+        appState.setModel(draftModel)
 
         let baseURL = draftAPIBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         appState.apiBaseURL = baseURL.isEmpty ? "https://api.openai.com" : baseURL
