@@ -4,12 +4,16 @@ Native SwiftUI/AppKit menu bar app for dictation using OpenAI or on-device Apple
 
 ## Features
 
-- Menu bar app (`MenuBarExtra`)
+- Menu bar app. Click the icon for the dictation panel: start or stop dictation, switch between OpenAI and
+  on-device, and copy or paste the last transcript again. Right-click it for Settings and Quit.
+- Dark mode only. The design reference is in [`docs/design`](docs/design).
 - Global hotkey, `Control + Option + Space` by default. Change it in Settings.
 - Two shortcut behaviors:
   - **Toggle** (default): press once to start recording, press again to stop and transcribe
   - **Hold to talk**: record while the shortcut is held, transcribe on release
-- While dictating, `Escape` cancels and `Return` finishes
+- While dictating, a small overlay shows a timer, an input level meter, and live text for on-device. `Escape`
+  cancels and `Return` finishes; you can also click **Insert** or **Cancel** in the overlay. It shows
+  "Transcribing…" after you stop and disappears as soon as the text is pasted.
 - **OpenAI** (default) records to a local 16 kHz m4a and uploads it to `/v1/audio/transcriptions` when you stop. The model ID (`gpt-transcribe` by default) is configurable.
 - **Apple On-Device** transcribes locally without an API key on supported Macs running macOS 26 or later. Audio streams into Apple's SpeechAnalyzer while you speak, so partial text appears in the overlay and the result is ready almost as soon as you stop. The language model downloads in the background when you first select this engine.
 - Pastes the transcript into the active app with a synthetic `Cmd+V`, then restores your previous clipboard. The temporary clipboard entry is marked transient, so clipboard managers ignore it.
@@ -45,9 +49,11 @@ OPEN_APP=1 ./scripts/build-app-bundle.sh
 
 The bundle identifier defaults to `dev.arai.VoiceBarDictate`. Override it with `PRODUCT_BUNDLE_IDENTIFIER`, but keep it stable: macOS ties microphone and Accessibility permissions to it. `APP_VERSION` and `BUILD_NUMBER` set the bundle version.
 
-After launch, use the menu bar icon and choose `Quit` from the menu to exit.
+After launch, right-click the menu bar icon and choose **Quit VoiceBar** to exit.
 
-Optional local self-signed certificate:
+Optional local signing certificate. Ad-hoc builds get a new signature every time, so macOS drops the
+Accessibility approval after each rebuild; signing with a stable certificate (any identity from
+`security find-identity -v -p codesigning`) keeps it:
 
 ```bash
 SIGNING_MODE=selfcert \
@@ -131,19 +137,21 @@ swift run
 ## Setup
 
 1. Launch the app (from `swift run` or Xcode).
-2. Open Settings from the menu bar menu.
+2. Open Settings: right-click the menu bar icon and choose **Settings…**, or use the `⋯` button in the panel.
 3. Choose an engine. For OpenAI, paste your OpenAI API key.
 4. If you use OpenAI with a regional project, set the API Base URL:
    - EU: `https://eu.api.openai.com`
    - US: `https://us.api.openai.com`
 5. Optional: click the shortcut to record a new one, and choose toggle or hold-to-talk.
 6. Grant microphone permission when prompted.
-7. On startup, the app asks for Accessibility permission automatically. Once you enable it, the app picks it up without restarting. It relaunches only if macOS does not allow key capture yet.
+7. On first launch, the app shows the macOS Accessibility prompt. If you skip it, the panel shows a notice
+   that opens System Settings. Once you enable it, the app picks it up without restarting. It relaunches only
+   if macOS does not allow key capture yet.
 8. To run at login, open Settings and enable **Start at login**.
 
 ## Upgrading
 
-- Settings from earlier versions that stored a retired OpenAI model ID (for example `gpt-4o-mini-transcribe`) switch to `gpt-transcribe` on first launch, and the menu says so once.
+- Settings from earlier versions that stored a retired OpenAI model ID (for example `gpt-4o-mini-transcribe`) switch to `gpt-transcribe` on first launch, and the panel says so once.
 - An API key saved under the old `com.codex.voicebardictate` Keychain service moves to `dev.arai.VoiceBarDictate` the first time it is read.
 
 ## Notes

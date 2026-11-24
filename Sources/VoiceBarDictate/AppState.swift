@@ -724,8 +724,9 @@ final class AppState {
         }
 
         guard !normalizedText.isEmpty else {
+            // Nothing to paste, so nothing to show: the overlay just goes away.
             statusMessage = "No speech detected."
-            recordingOverlay.showMessage("No speech detected.")
+            recordingOverlay.hide()
             return
         }
 

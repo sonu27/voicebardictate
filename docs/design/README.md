@@ -29,5 +29,6 @@ and `Theme.swift`. Right-clicking the menu bar icon shows Settings and Quit.
   a timer, and keycap hints (`↩ Insert`, `esc Cancel`; "Release to insert" in hold mode).
 - "No audio from <device>" appears only if no sound at all has been heard ~4 s into a recording.
 - After dictation stops, the overlay shows "Transcribing…" and disappears as soon as the text is pasted. The
-  mockup's "Inserted · N words" card was dropped so nothing stays on screen. If pasting is impossible, the
-  transcript is left on the clipboard and the overlay says so.
+  mockup's "Inserted · N words" card was dropped so nothing stays on screen; if no speech was heard, the
+  overlay simply disappears too. If pasting is impossible, the transcript is left on the clipboard and the
+  overlay says so.
